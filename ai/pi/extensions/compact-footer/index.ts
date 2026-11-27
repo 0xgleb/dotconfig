@@ -6,7 +6,7 @@ import type {
 import { homedir } from "node:os"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
-import { alignFooterLine, formatFooter } from "./presentation.ts"
+import { formatFooter } from "./presentation.ts"
 import { resolveContextPercent, type TokenUsage } from "./usage.ts"
 
 function compactPath(cwd: string): string {
@@ -70,17 +70,20 @@ export default function compactFooter(pi: ExtensionAPI): void {
         },
         invalidate() {},
         render(width: number): string[] {
-          const footer = formatFooter({
-            cwd: compactPath(ctx.sessionManager.getCwd()),
-            branch: footerData.getGitBranch() ?? undefined,
-            modelId: ctx.model?.id ?? "no-model",
-            thinkingLevel: ctx.model?.reasoning
-              ? pi.getThinkingLevel()
-              : undefined,
-            contextPercent: usageSnapshot.contextPercent,
-            contextWindow: usageSnapshot.contextWindow,
-          })
-          return [theme.fg("dim", alignFooterLine(footer, width))]
+          const footer = formatFooter(
+            {
+              cwd: compactPath(ctx.sessionManager.getCwd()),
+              branch: footerData.getGitBranch() ?? undefined,
+              modelId: ctx.model?.id ?? "no-model",
+              thinkingLevel: ctx.model?.reasoning
+                ? pi.getThinkingLevel()
+                : undefined,
+              contextPercent: usageSnapshot.contextPercent,
+              contextWindow: usageSnapshot.contextWindow,
+            },
+            width,
+          )
+          return [theme.fg("dim", footer), ""]
         },
       }
     })

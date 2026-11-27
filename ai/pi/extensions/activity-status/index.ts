@@ -24,7 +24,6 @@ import {
 const STATUS_KEY = "activity-phase"
 const TOOL_PROGRESS_WIDGET_KEY = "activity-tool-progress"
 const TOOL_PROGRESS_TICK_MS = 1_000
-const READY_LABEL = "READY · awaiting activity"
 
 export default function activityStatus(pi: ExtensionAPI): void {
   registerRuntimeVersion(pi, "activity-status", "2026.08.20.1")
@@ -34,12 +33,10 @@ export default function activityStatus(pi: ExtensionAPI): void {
   let pendingQuestionCount = 0
   let progressTimer: ReturnType<typeof setInterval> | undefined
 
-  const actionLabel = (): string =>
+  const actionLabel = (): string | undefined =>
     pendingQuestionCount > 0
       ? `ACTION REQUIRED · ${pendingQuestionCount} question${pendingQuestionCount === 1 ? "" : "s"} · /questions`
-      : READY_LABEL
-
-  const questionLabel = actionLabel
+      : undefined
 
   const withQuestionLabel = (label: string): string => {
     const persistent = [
@@ -62,8 +59,15 @@ export default function activityStatus(pi: ExtensionAPI): void {
     progressTimer = undefined
   }
 
-  const setProgressWidget = (label: string, ctx = latestCtx): void => {
+  const setProgressWidget = (
+    label: string | undefined,
+    ctx = latestCtx,
+  ): void => {
     if (!ctx) return
+    if (label === undefined) {
+      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, undefined)
+      return
+    }
     ctx.ui.setWidget(
       TOOL_PROGRESS_WIDGET_KEY,
       () => ({
@@ -76,7 +80,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
 
   const clearToolProgress = (ctx = latestCtx): void => {
     stopProgressTicker()
-    setProgressWidget(questionLabel(), ctx)
+    setProgressWidget(actionLabel(), ctx)
   }
 
   const showRunningTools = (ctx = latestCtx): void => {
@@ -87,7 +91,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
     if (tools.length > 0) {
       setProgressWidget(withQuestionLabel(phase.label), ctx)
     } else {
-      setProgressWidget(questionLabel(), ctx)
+      setProgressWidget(actionLabel(), ctx)
     }
   }
 
@@ -106,7 +110,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
       if (!latestCtx) return
 
       if (runningTools.size > 0) showRunningTools(latestCtx)
-      else setProgressWidget(questionLabel(), latestCtx)
+      else setProgressWidget(actionLabel(), latestCtx)
     },
   )
 

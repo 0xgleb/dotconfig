@@ -1,4 +1,5 @@
-import { alignChromeLine } from "../shared/chrome.ts"
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
+import { alignChromeLine, chromeInset } from "../shared/chrome.ts"
 
 export interface FooterPresentation {
   readonly cwd: string
@@ -20,19 +21,44 @@ function formatTokens(count: number): string {
 export const alignFooterLine = (footer: string, width: number): string =>
   alignChromeLine(footer, width)
 
-export function formatFooter(input: FooterPresentation): string {
+export function formatFooter(
+  input: FooterPresentation,
+  width?: number,
+): string {
   const location = input.branch ? `${input.cwd} (${input.branch})` : input.cwd
   const contextPercent =
     input.contextPercent === undefined
       ? "?"
       : `${input.contextPercent.toFixed(1)}%`
-  const groups = [
-    location,
-    `ctx ${contextPercent} of ${formatTokens(input.contextWindow)}`,
-    input.thinkingLevel
-      ? `${input.modelId} / ${input.thinkingLevel}`
-      : input.modelId,
-  ]
+  const context = `ctx ${contextPercent} of ${formatTokens(input.contextWindow)}`
+  const model = input.thinkingLevel
+    ? `${input.modelId} / ${input.thinkingLevel}`
+    : input.modelId
 
-  return groups.join("  ·  ")
+  if (width === undefined) return `${location} ${context} ${model}`
+  const available = Math.max(0, width - 2 * chromeInset(width))
+  const metricWidth = visibleWidth(context) + visibleWidth(model)
+  const locationBudget = available - metricWidth - 2
+  if (locationBudget < 1) return alignFooterLine(`${context} ${model}`, width)
+
+  const branch = input.branch ? ` (${input.branch})` : ""
+  const branchWidth = visibleWidth(branch)
+  const fittedLocation =
+    visibleWidth(location) <= locationBudget
+      ? location
+      : branchWidth < locationBudget
+        ? truncateToWidth(input.cwd, locationBudget - branchWidth, "…") + branch
+        : truncateToWidth(location, locationBudget, "…")
+  const slack = available - visibleWidth(fittedLocation) - metricWidth
+  const firstGap = Math.floor(slack / 2)
+  const secondGap = slack - firstGap
+
+  return alignFooterLine(
+    fittedLocation +
+      " ".repeat(firstGap) +
+      context +
+      " ".repeat(secondGap) +
+      model,
+    width,
+  )
 }
