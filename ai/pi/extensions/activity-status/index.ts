@@ -30,7 +30,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0
   let pendingQuestionCount = 0
-  let progressTimer: ReturnType<typeof setInterval> | undefined
 
   const actionLabel = (): string | undefined =>
     pendingQuestionCount > 0
@@ -126,7 +125,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
       event.toolCallId,
       startToolProgress(event.toolName, Date.now()),
     )
-    startProgressTicker(ctx)
     if (classifierDepth === 0) showRunningTools(ctx)
   })
 
@@ -143,7 +141,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
 
   pi.on("tool_execution_end", (event, ctx) => {
     runningTools.delete(event.toolCallId)
-    if (runningTools.size === 0) stopProgressTicker()
     if (classifierDepth === 0) showRunningTools(ctx)
   })
 
