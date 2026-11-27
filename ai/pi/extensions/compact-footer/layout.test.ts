@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import compactFooter from "./index.ts"
 
-test("the mounted footer leaves one blank row below its metadata", () => {
+test("the mounted footer leaves equal space above and below its metadata", () => {
   let start: unknown
   Reflect.apply(compactFooter, undefined, [
     {
@@ -28,10 +28,13 @@ test("the mounted footer leaves one blank row below its metadata", () => {
               onBranchChange: () => () => {},
             },
           )
-          const lines = footer.render(100)
-          assert.equal(lines.length, 2)
-          assert.match(lines[0], /\/project \(main\).*ctx 12\.0% of 500k/)
-          assert.equal(lines[1], "")
+          for (const width of [72, 100, 140]) {
+            const lines = footer.render(width)
+            assert.equal(lines.length, 3)
+            assert.equal(lines[0], "")
+            assert.match(lines[1], /\/project \(main\).*ctx 12\.0% of 500k/)
+            assert.equal(lines[2], "")
+          }
         },
       },
     },

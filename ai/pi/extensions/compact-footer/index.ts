@@ -83,7 +83,7 @@ export default function compactFooter(pi: ExtensionAPI): void {
             },
             width,
           )
-          return [theme.fg("dim", footer), ""]
+          return ["", theme.fg("dim", footer), ""]
         },
       }
     })
