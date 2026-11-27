@@ -15,10 +15,6 @@ const input: FooterPresentation = {
   thinkingLevel: "high",
   contextPercent: 12.34,
   contextWindow: 372_000,
-  cacheHitRate: 98.76,
-  inputTokens: 12_400,
-  outputTokens: 4_200,
-  statuses: ["/goal · 2 turns"],
 }
 
 test("footer is a single readable line with spaced groups", () => {
@@ -27,7 +23,7 @@ test("footer is a single readable line with spaced groups", () => {
   assert.equal(footer.split("\n").length, 1)
   assert.equal(
     footer,
-    "~/code/st0x (feat/footer)  ·  ctx 12.3% of 372k  ·  cache 98.8%  ·  ↑12k ↓4.2k  ·  gpt-5.6-sol / high  ·  /goal · 2 turns",
+    "~/code/st0x (feat/footer)  ·  ctx 12.3% of 372k  ·  gpt-5.6-sol / high",
   )
 })
 
@@ -58,7 +54,6 @@ test("footer handles unknown usage without inventing a percentage", () => {
     formatFooter({
       ...input,
       contextPercent: undefined,
-      cacheHitRate: undefined,
     }),
     /ctx \? of 372k/,
   )

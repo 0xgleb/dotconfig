@@ -7,11 +7,7 @@ import { homedir } from "node:os"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { alignFooterLine, formatFooter } from "./presentation.ts"
-import {
-  aggregateUsage,
-  resolveContextPercent,
-  type TokenUsage,
-} from "./usage.ts"
+import { resolveContextPercent, type TokenUsage } from "./usage.ts"
 
 function compactPath(cwd: string): string {
   const home = resolve(homedir())
@@ -37,14 +33,10 @@ function assistantUsages(ctx: ExtensionContext): TokenUsage[] {
 interface UsageSnapshot {
   readonly contextPercent: number | undefined
   readonly contextWindow: number
-  readonly cacheHitRate: number | undefined
-  readonly inputTokens: number
-  readonly outputTokens: number
 }
 
 const captureUsageSnapshot = (ctx: ExtensionContext): UsageSnapshot => {
   const usages = assistantUsages(ctx)
-  const usage = aggregateUsage(usages)
   const context = ctx.getContextUsage()
   const contextWindow = context?.contextWindow ?? ctx.model?.contextWindow ?? 0
   return {
@@ -54,9 +46,6 @@ const captureUsageSnapshot = (ctx: ExtensionContext): UsageSnapshot => {
       usages,
     ),
     contextWindow,
-    cacheHitRate: usage.cacheHitRate,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
   }
 }
 
@@ -81,10 +70,6 @@ export default function compactFooter(pi: ExtensionAPI): void {
         },
         invalidate() {},
         render(width: number): string[] {
-          const statuses = [...footerData.getExtensionStatuses().entries()]
-            .filter(([key]) => key !== "auto-classifier")
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([, value]) => value)
           const footer = formatFooter({
             cwd: compactPath(ctx.sessionManager.getCwd()),
             branch: footerData.getGitBranch() ?? undefined,
@@ -94,10 +79,8 @@ export default function compactFooter(pi: ExtensionAPI): void {
               : undefined,
             contextPercent: usageSnapshot.contextPercent,
             contextWindow: usageSnapshot.contextWindow,
-            cacheHitRate: usageSnapshot.cacheHitRate,
             inputTokens: usageSnapshot.inputTokens,
             outputTokens: usageSnapshot.outputTokens,
-            statuses,
           })
           return [theme.fg("dim", alignFooterLine(footer, width))]
         },
@@ -105,6 +88,8 @@ export default function compactFooter(pi: ExtensionAPI): void {
     })
   })
 
+  pi.on("turn_end", () => refreshCurrentSnapshot?.())
+  pi.on("session_tree", () => refreshCurrentSnapshot?.())
   pi.on("model_select", () => refreshCurrentSnapshot?.())
   pi.on("session_shutdown", () => {
     refreshCurrentSnapshot = undefined

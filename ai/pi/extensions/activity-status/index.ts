@@ -1,4 +1,3 @@
-import { homedir } from "node:os"
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -18,7 +17,6 @@ import {
   observeToolProgress,
   runningToolProgressPhase,
   startToolProgress,
-  usageThrottleLabel,
   type ActivityPhase,
   type ToolProgress,
 } from "./core.ts"
@@ -34,7 +32,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0
   let pendingQuestionCount = 0
-  let throttleLabel: string | undefined
   let progressTimer: ReturnType<typeof setInterval> | undefined
 
   const actionLabel = (): string =>
@@ -42,12 +39,10 @@ export default function activityStatus(pi: ExtensionAPI): void {
       ? `ACTION REQUIRED · ${pendingQuestionCount} question${pendingQuestionCount === 1 ? "" : "s"} · /questions`
       : READY_LABEL
 
-  const questionLabel = (): string =>
-    [throttleLabel, actionLabel()].filter(Boolean).join(" · ")
+  const questionLabel = actionLabel
 
   const withQuestionLabel = (label: string): string => {
     const persistent = [
-      throttleLabel,
       pendingQuestionCount > 0 ? actionLabel() : undefined,
     ].filter(Boolean)
     return persistent.length > 0
@@ -75,7 +70,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
         render: (width: number) => [alignChromeLine(label, width)],
         invalidate: () => {},
       }),
-      { placement: "belowEditor" },
+      { placement: "aboveEditor" },
     )
   }
 
@@ -131,9 +126,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
     latestCtx = ctx
     runningTools.clear()
     classifierDepth = 0
-    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
     clearToolProgress(ctx)
-    ctx.ui.setStatus(STATUS_KEY, throttleLabel)
     ctx.ui.setWorkingIndicator({ frames: ["●"] })
     ctx.ui.setWorkingMessage()
   })
@@ -141,7 +134,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
   pi.on("agent_start", (_event, ctx) => {
     latestCtx = ctx
     runningTools.clear()
-    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
     clearToolProgress(ctx)
     show({ kind: "model", label: "MODEL · awaiting generation" }, ctx)
   })
@@ -203,7 +195,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
     runningTools.clear()
     classifierDepth = 0
     clearToolProgress(ctx)
-    ctx.ui.setStatus(STATUS_KEY, throttleLabel)
     ctx.ui.setWorkingMessage()
   })
 
@@ -213,7 +204,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
     ctx.ui.setStatus(STATUS_KEY, undefined)
     ctx.ui.setWorkingIndicator()
     ctx.ui.setWorkingMessage()
-    throttleLabel = undefined
     latestCtx = undefined
   })
 }
