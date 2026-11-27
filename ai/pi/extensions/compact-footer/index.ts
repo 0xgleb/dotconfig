@@ -79,8 +79,6 @@ export default function compactFooter(pi: ExtensionAPI): void {
               : undefined,
             contextPercent: usageSnapshot.contextPercent,
             contextWindow: usageSnapshot.contextWindow,
-            inputTokens: usageSnapshot.inputTokens,
-            outputTokens: usageSnapshot.outputTokens,
           })
           return [theme.fg("dim", alignFooterLine(footer, width))]
         },
