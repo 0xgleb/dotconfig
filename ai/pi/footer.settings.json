@@ -7,7 +7,7 @@
       { "type": "cwd", "options": { "cwdDisplayStyle": "full-home" } },
       { "type": "flex-separator" },
       { "type": "model" },
-      { "type": "thinking-level" },
+      { "type": "thinking-level", "options": { "hideWhenEmpty": true } },
       { "type": "context" },
       { "type": "context-window" }
     ]
