@@ -21,7 +21,11 @@ import {
   runDirenvExportProcess,
 } from "./direnv.ts"
 
-import { formatCommandForDisplay } from "./display-format.ts"
+import {
+  formatCommandForDisplay,
+  highlightNushellPreview,
+} from "./display-format.ts"
+import { stripVTControlCharacters } from "node:util"
 import { commandOutcome } from "./outcome.ts"
 import { resultRows } from "./result-layout.ts"
 import { verdictView } from "./verdict-view.ts"
@@ -36,6 +40,7 @@ export const nushellPromptGuidelines = [
 export const renderNushellCall = (
   args: BashToolInput,
   theme: Pick<Theme, "fg" | "bold">,
+  highlight: (script: string) => string | undefined = highlightNushellPreview,
 ): Component => {
   const command =
     typeof args.command === "string" && args.command.length > 0
@@ -43,6 +48,10 @@ export const renderNushellCall = (
       : "..."
 
   const display = formatCommandForDisplay(command)
+  const colored = highlight(display)
+  const colorsByLine = new Map(
+    colored?.split("\n").map(line => [stripVTControlCharacters(line), line]),
+  )
   return {
     render: width => {
       latestNushellTuiWidth = width
@@ -55,7 +64,9 @@ export const renderNushellCall = (
       return [
         theme.fg("toolTitle", theme.bold(preview.header)),
         "",
-        ...preview.commandLines.map(line => theme.fg("toolOutput", line)),
+        ...preview.commandLines.map(
+          line => colorsByLine.get(line) ?? theme.fg("toolOutput", line),
+        ),
         ...preview.timeoutLines.map(line => theme.fg("muted", line)),
       ]
     },
@@ -133,7 +144,7 @@ export default function nushellDefault(pi: ExtensionAPI): void {
       }).execute(toolCallId, params, signal, onUpdate, ctx)
     },
 
-    renderCall: renderNushellCall,
+    renderCall: (args, theme) => renderNushellCall(args, theme),
     renderResult(result, options, theme, context) {
       const original = definition.renderResult?.(
         result,

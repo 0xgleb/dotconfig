@@ -22,9 +22,17 @@ test("the rendered Nushell header is separated from the unbolded script", async 
     fg: (color: string, text: string) => `${color}:${text}`,
     bold: (text: string) => `bold:${text}`,
   }
-  const rows = renderNushellCall({ command: "echo fixture" }, theme).render(42)
+  let calls = 0
+  const view = renderNushellCall({ command: "echo fixture" }, theme, script => {
+    calls++
+    assert.equal(script, "echo fixture")
+    return "\u001b[32mecho\u001b[0m fixture"
+  })
+  const rows = view.render(42)
+  view.render(140)
+  assert.equal(calls, 1)
   assert.equal(rows[1], "")
-  assert.equal(rows[2], theme.fg("toolOutput", "echo fixture"))
+  assert.equal(rows[2], "\u001b[32mecho\u001b[0m fixture")
 })
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
