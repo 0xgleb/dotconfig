@@ -6,7 +6,8 @@ export const breakAtNushellBoundaries = (
 ): string => {
   if (text.length <= width || /[\n\r\u001b]/u.test(text)) return text
   const stack: string[] = []
-  const breaks: Array<{ index: number; indent: string }> = []
+  const breaks: Array<{ index: number; indent: string; statementEnd?: true }> =
+    []
   let quote: '"' | "'" | undefined
   let bodyStart = -1
   let bodyEnd = -1
@@ -78,7 +79,11 @@ export const breakAtNushellBoundaries = (
       const inBody = bodyStart >= 0 && bodyEnd < 0 && stack.length === 1
       if (stack.length !== 0 && !inBody) continue
       if (char === ";")
-        breaks.push({ index: index + 1, indent: inBody ? "  " : "" })
+        breaks.push({
+          index: index + 1,
+          indent: inBody ? "  " : "",
+          ...(inBody ? {} : { statementEnd: true }),
+        })
       if (char === "|" && text[index - 1] === " " && text[index + 1] === " ") {
         lastPipe = index
         if (!keepClosurePipeline)
@@ -97,18 +102,31 @@ export const breakAtNushellBoundaries = (
 
   let offset = 0
   let indent = ""
-  const rows = breaks.map(boundary => {
+  const statements: string[][] = []
+  let rows: string[] = []
+  for (const boundary of breaks) {
     const segment = text.slice(offset, boundary.index).trim()
     const row = indent + segment
-    const separatesStatement =
-      /^[})];$/u.test(segment) && text.slice(boundary.index).trim().length > 0
+    rows.push(row)
+    if (boundary.statementEnd) {
+      statements.push(rows)
+      rows = []
+    }
     offset = boundary.index
     indent = boundary.indent
-    return separatesStatement ? `${row}\n` : row
-  })
+  }
+  const tail = text.slice(offset).trim()
+  if (tail || rows.length > 0) statements.push([...rows, indent + tail])
   if (expandedClosure && !keepClosurePipeline && width > 0) {
     const inline = breakAtNushellBoundaries(text, 0, true)
     if (inline.split("\n").every(line => line.length <= width)) return inline
   }
-  return [...rows, indent + text.slice(offset).trim()].join("\n")
+  return statements
+    .map((lines, index) => {
+      const previous = statements[index - 1]
+      const space =
+        previous && (previous.length > 1 || lines.length > 1) ? "\n" : ""
+      return space + lines.join("\n")
+    })
+    .join("\n")
 }

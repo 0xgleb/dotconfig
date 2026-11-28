@@ -66,6 +66,16 @@ test("a closed block separates an independent statement, not its next pipeline s
   )
 })
 
+test("blank rows surround a continued pipeline only at statement boundaries", () => {
+  assert.equal(
+    breakAtNushellBoundaries(
+      "print before; ls | get name | str upcase; print after",
+      20,
+    ),
+    "print before;\n\nls\n  | get name\n  | str upcase;\n\nprint after",
+  )
+})
+
 test("a long simple external invocation uses Nushell multiline arguments", () => {
   assert.equal(
     breakAtNushellBoundaries("^printf fixture alpha bravo charlie", 24),
