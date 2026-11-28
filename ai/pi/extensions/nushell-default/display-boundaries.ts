@@ -37,10 +37,14 @@ export const breakAtNushellBoundaries = (
       .map(line => {
         const list = reflowLoopList(line, width)
         if (list !== line) return list
-        const block = /^( *)(if (?:true|false) \{.+\})$/u.exec(line)
-        if (!block?.[2]) return line
-        const indent = block[1] ?? ""
-        return breakAtNushellBoundaries(block[2], width - indent.length)
+        const command = line.trimStart()
+        if (!/^(?:if\s|.*\bwhere\s+\{\|)/u.test(command)) return line
+        const indent = line.slice(0, line.length - command.length)
+        return breakAtNushellBoundaries(
+          command,
+          width - indent.length,
+          keepClosurePipeline,
+        )
           .split("\n")
           .map(row => indent + row)
           .join("\n")
@@ -80,7 +84,7 @@ export const breakAtNushellBoundaries = (
       if (
         char === "{" &&
         stack.length === 0 &&
-        /^(?:with-env\s+\{.*\}|if (?:true|false))\s*$/u.test(
+        /^(?:with-env\s+\{.*\}|if (?:true|false|\(.*\)))\s*$/u.test(
           text.slice(0, index),
         )
       ) {

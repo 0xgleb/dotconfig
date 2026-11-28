@@ -23,6 +23,15 @@ test("expands a simple braced if inside a multiline loop", () => {
   )
 })
 
+test("reflows a parenthesized condition and a closure within authored nesting", () => {
+  const script =
+    'for p in [one two] {\n  if ($p == "one") { print "long message"; print $p }\n  ls | where {|row| $row.name =~ "long-pattern" }\n}'
+  assert.equal(
+    breakAtNushellBoundaries(script, 36),
+    'for p in [one two] {\n  if ($p == "one") {\n    print "long message";\n    print $p\n  }\n  ls | where {|row|\n    $row.name =~ "long-pattern"\n  }\n}',
+  )
+})
+
 test("preserves authored indentation in multiline previews", () => {
   const script =
     "for w in [42 140] {\n  with-env {MODE: 'fixture'} {\n    print $w\n  }\n}"
