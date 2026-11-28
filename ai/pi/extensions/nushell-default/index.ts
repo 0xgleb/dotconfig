@@ -23,6 +23,7 @@ import {
 
 import { formatCommandForDisplay } from "./display-format.ts"
 import { commandOutcome } from "./outcome.ts"
+import { verdictView } from "./verdict-view.ts"
 
 let latestNushellTuiWidth: number | undefined
 
@@ -147,7 +148,7 @@ export default function nushellDefault(pi: ExtensionAPI): void {
         context.executionStarted,
       )
       if (!context.executionStarted && context.isError)
-        return new Text(`${outcome.icon} ${outcome.explanation}`, 0, 0)
+        return verdictView(outcome.icon, outcome.explanation)
       return {
         render: width => [outcome.icon, ...(original?.render(width) ?? [])],
         invalidate: () => original?.invalidate(),
