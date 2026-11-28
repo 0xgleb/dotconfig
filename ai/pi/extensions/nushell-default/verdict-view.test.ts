@@ -12,7 +12,8 @@ test("verdicts render Markdown and wrap prose within narrow and wide panes", () 
       `**Blocked** ${"verification needed ".repeat(10)}`,
     ).render(width)
     assert.match(rows[0] ?? "", /▲/)
-    assert.ok(rows.every(row => visibleWidth(row) <= Math.min(80, width)))
+    assert.ok(rows.every(row => visibleWidth(row) <= width))
+    if (width > 80) assert.ok(rows.some(row => visibleWidth(row) > 80))
     assert.ok(!rows.join("\n").includes("**Blocked**"))
   }
 })
