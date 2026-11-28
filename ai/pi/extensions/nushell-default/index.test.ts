@@ -29,6 +29,14 @@ test("the rendered Nushell header is separated from the unbolded script", async 
     return "\u001b[32mecho\u001b[0m fixture"
   })
   const rows = view.render(42)
+  const completed = renderNushellCall(
+    { command: "echo fixture" },
+    theme,
+    () => undefined,
+    () => "check",
+  ).render(42)
+  assert.match(completed[0] ?? "", /Nushell  check$/u)
+  assert.doesNotMatch(rows[0] ?? "", /check/u)
   view.render(140)
   assert.equal(calls, 1)
   assert.equal(rows[1], "")

@@ -28,7 +28,6 @@ import {
 import { stripVTControlCharacters } from "node:util"
 import { commandOutcome } from "./outcome.ts"
 import { breakAtNushellBoundaries } from "./display-boundaries.ts"
-import { resultRows } from "./result-layout.ts"
 import { verdictView } from "./verdict-view.ts"
 
 let latestNushellTuiWidth: number | undefined
@@ -42,6 +41,7 @@ export const renderNushellCall = (
   args: BashToolInput,
   theme: Pick<Theme, "fg" | "bold">,
   highlight: (script: string) => string | undefined = highlightNushellPreview,
+  readOutcome: () => string | undefined = () => undefined,
 ): Component => {
   const command =
     typeof args.command === "string" && args.command.length > 0
@@ -70,8 +70,10 @@ export const renderNushellCall = (
         wrapTextWithAnsi,
         line => colorsByLine.get(line) ?? theme.fg("toolOutput", line),
       )
+      const outcome = readOutcome()
       return [
-        theme.fg("toolTitle", theme.bold(preview.header)),
+        theme.fg("toolTitle", theme.bold(preview.header)) +
+          (outcome && width >= 12 ? `  ${outcome}` : ""),
         "",
         ...preview.commandLines.map(line =>
           line.replace(/\u001b\[(?:0|)m/gu, "\u001b[39m"),
@@ -106,6 +108,7 @@ export default function nushellDefault(pi: ExtensionAPI): void {
   })
   const definition = createBashToolDefinition(process.cwd(), { shellPath })
 
+  const outcomes = new WeakMap<object, string>()
   pi.registerTool({
     ...definition,
     description:
@@ -153,7 +156,10 @@ export default function nushellDefault(pi: ExtensionAPI): void {
       }).execute(toolCallId, params, signal, onUpdate, ctx)
     },
 
-    renderCall: (args, theme) => renderNushellCall(args, theme),
+    renderCall: (args, theme, context) =>
+      renderNushellCall(args, theme, undefined, () =>
+        outcomes.get(context.state),
+      ),
     renderResult(result, options, theme, context) {
       const original = definition.renderResult?.(
         result,
@@ -169,18 +175,16 @@ export default function nushellDefault(pi: ExtensionAPI): void {
         context.executionStarted,
         result.details,
       )
+      const icon =
+        outcome.icon === "▲"
+          ? theme.fg("warning", "󰀪")
+          : outcome.icon === ""
+            ? theme.fg("muted", outcome.icon)
+            : outcome.icon
+      outcomes.set(context.state, icon)
       if (outcome.icon === "▲")
-        return verdictView(theme.fg("warning", "󰀪"), outcome.explanation)
-      return {
-        render: width =>
-          resultRows(
-            outcome.icon === ""
-              ? theme.fg("muted", outcome.icon)
-              : outcome.icon,
-            original?.render(width) ?? [],
-          ),
-        invalidate: () => original?.invalidate(),
-      }
+        return verdictView(undefined, outcome.explanation)
+      return original ?? new Text("", 0, 0)
     },
   })
 }
