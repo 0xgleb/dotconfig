@@ -5,6 +5,15 @@ import { nushellToolPreviewLines } from "./core.ts"
 import { breakAtNushellBoundaries } from "./display-boundaries.ts"
 import { formatCommandForDisplay } from "./display-format.ts"
 
+test("reflows a long loop list inside an authored multiline script", () => {
+  const script =
+    'for p in ["first long path" "second long path"] {\n  print $p\n}'
+  assert.equal(
+    breakAtNushellBoundaries(script, 28),
+    'for p in [\n  "first long path"\n  "second long path"\n] {\n  print $p\n}',
+  )
+})
+
 test("preserves authored indentation in multiline previews", () => {
   const script =
     "for w in [42 140] {\n  with-env {MODE: 'fixture'} {\n    print $w\n  }\n}"

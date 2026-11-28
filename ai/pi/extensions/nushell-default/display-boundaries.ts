@@ -1,10 +1,34 @@
-// Only reflow single-line input whose delimiters can be classified reliably.
+// Match only plain list elements and complete quote-delimited literals.
+const loopListHeader =
+  /^( *)(for [\w-]+ in \[)( *(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|[\w./-]+)(?: +(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*'|[\w./-]+))* *)\]( \{)$/u
+const listElement = /"(?:[^"\\]|\\.)*"|'[^']*'|[\w./-]+/gu
+
+const reflowLoopList = (text: string, width: number): string => {
+  const newline = text.indexOf("\n")
+  const header = newline < 0 ? text : text.slice(0, newline)
+  if (header.length <= width) return text
+  const match = loopListHeader.exec(header)
+  if (!match) return text
+  const [, indent, prefix, list, suffix] = match
+  const elements = list?.match(listElement)
+  if (!elements || elements.length < 2) return text
+  return (
+    [
+      `${indent}${prefix}`,
+      ...elements.map(element => `${indent}  ${element}`),
+      `${indent}]${suffix}`,
+    ].join("\n") + (newline < 0 ? "" : text.slice(newline))
+  )
+}
+
+// Preserve source when the boundaries cannot be classified reliably.
 export const breakAtNushellBoundaries = (
   text: string,
   width: number,
   keepClosurePipeline = false,
 ): string => {
-  if (text.length <= width || /[\n\r\u001b]/u.test(text)) return text
+  if (text.length <= width || /[\r\u001b]/u.test(text)) return text
+  if (text.includes("\n")) return reflowLoopList(text, width)
   const stack: string[] = []
   const breaks: Array<{ index: number; indent: string; statementEnd?: true }> =
     []
