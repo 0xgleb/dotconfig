@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 import {
+  HOST_MIGRATION_DISCLOSURE_ENV,
   HOST_MIGRATION_DRAFT_ENV,
   HOST_MIGRATION_RESUME_ENV,
   hostMigrationArgv,
@@ -104,6 +105,16 @@ test("a running old Nix host migrates to the stable verified host in place", () 
     KEEP: "yes",
     [HOST_MIGRATION_DRAFT_ENV]: "",
   })
+})
+
+test("host replacement carries both explicit disclosure choices", () => {
+  for (const expanded of [false, true]) {
+    const environment = hostMigrationEnvironment({}, "", false, expanded)
+    assert.equal(
+      environment[HOST_MIGRATION_DISCLOSURE_ENV],
+      expanded ? "1" : "0",
+    )
+  }
 })
 
 test("activated host changes are polled even without a managed source event", () => {

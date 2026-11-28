@@ -89,6 +89,11 @@ let
   system = pkgs.stdenv.hostPlatform.system;
   unstable = import inputs.nixpkgs-unstable {
     inherit system;
+    config.packageOverrides = previous: {
+      pi-coding-agent = previous.pi-coding-agent.overrideAttrs (attrs: {
+        patches = (attrs.patches or [ ]) ++ [ ./ai/pi/host/preserve-card-disclosure.patch ];
+      });
+    };
     config.allowUnfree = true;
   };
   nuConfigDir =

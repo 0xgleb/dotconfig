@@ -450,6 +450,7 @@ const autoReload: (pi: ExtensionAPI) => void = pi => {
             process.env,
             editorDraft,
             delivery === "resume" || delivery === "followUp",
+            ctx.ui.getToolsExpanded(),
           ),
         )
       } catch (error) {
