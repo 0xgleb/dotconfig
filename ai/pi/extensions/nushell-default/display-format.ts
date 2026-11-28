@@ -53,4 +53,4 @@ const runNufmt = (raw: string): string | undefined => {
 export const formatCommandForDisplay = (
   raw: string,
   format: (text: string) => string | undefined = runNufmt,
-): string => format(raw) || raw
+): string => (/[\r\n]/u.test(raw) ? raw : format(raw) || raw)

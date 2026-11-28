@@ -5,6 +5,17 @@ import { nushellToolPreviewLines } from "./core.ts"
 import { breakAtNushellBoundaries } from "./display-boundaries.ts"
 import { formatCommandForDisplay } from "./display-format.ts"
 
+test("preserves authored indentation in multiline previews", () => {
+  const script =
+    "for w in [42 140] {\n  with-env {MODE: 'fixture'} {\n    print $w\n  }\n}"
+  assert.equal(
+    formatCommandForDisplay(script, () =>
+      script.replace("    print", "  print"),
+    ),
+    script,
+  )
+})
+
 test("formats nested Nushell for display and falls back to exact input", () => {
   const raw =
     'with-env {MODE: "fixture"} { [1 2] | each {|x| $x + 1 }; assert true }'
