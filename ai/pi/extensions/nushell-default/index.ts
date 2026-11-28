@@ -21,6 +21,8 @@ import {
   runDirenvExportProcess,
 } from "./direnv.ts"
 
+import { formatCommandForDisplay } from "./display-format.ts"
+
 let latestNushellTuiWidth: number | undefined
 
 export const nushellPromptGuidelines = [
@@ -37,11 +39,12 @@ export const renderNushellCall = (
       ? args.command
       : "..."
 
+  const display = formatCommandForDisplay(command)
   return {
     render: width => {
       latestNushellTuiWidth = width
       const preview = nushellToolPreviewLines(
-        command,
+        display,
         args.timeout,
         width,
         wrapTextWithAnsi,
