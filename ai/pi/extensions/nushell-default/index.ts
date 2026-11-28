@@ -4,7 +4,7 @@ import {
   type ExtensionAPI,
   type Theme,
 } from "@earendil-works/pi-coding-agent"
-import { wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui"
+import { Text, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui"
 import { Effect, Either } from "effect"
 
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
@@ -22,6 +22,7 @@ import {
 } from "./direnv.ts"
 
 import { formatCommandForDisplay } from "./display-format.ts"
+import { commandOutcome } from "./outcome.ts"
 
 let latestNushellTuiWidth: number | undefined
 
@@ -131,5 +132,26 @@ export default function nushellDefault(pi: ExtensionAPI): void {
     },
 
     renderCall: renderNushellCall,
+    renderResult(result, options, theme, context) {
+      const original = definition.renderResult?.(
+        result,
+        options,
+        theme,
+        context,
+      )
+      if (options.isPartial) return original ?? new Text("", 0, 0)
+      const first = result.content[0]
+      const outcome = commandOutcome(
+        context.isError,
+        first?.type === "text" ? first.text : "",
+        context.executionStarted,
+      )
+      if (!context.executionStarted && context.isError)
+        return new Text(`${outcome.icon} ${outcome.explanation}`, 0, 0)
+      return {
+        render: width => [outcome.icon, ...(original?.render(width) ?? [])],
+        invalidate: () => original?.invalidate(),
+      }
+    },
   })
 }
