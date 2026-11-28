@@ -295,6 +295,7 @@ in
       ".pi/agent/AGENTS.md".force = true;
       ".config/ai/pi/workspaces/manager/.pi/settings.json".source =
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/manager.settings.json";
+      ".pi/agent/extensions/pi-footer.json".source = ./ai/pi/footer.settings.json;
       ".pi/agent/bin/but".source = "${but}/bin/but";
       ".pi/agent/bin/but".force = true;
       ".pi/agent/bin/pi".source = "${unstable.pi-coding-agent}/bin/pi";
