@@ -1,4 +1,3 @@
-import { homedir } from "node:os"
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -18,15 +17,12 @@ import {
   observeToolProgress,
   runningToolProgressPhase,
   startToolProgress,
-  usageThrottleLabel,
   type ActivityPhase,
   type ToolProgress,
 } from "./core.ts"
 
 const STATUS_KEY = "activity-phase"
 const TOOL_PROGRESS_WIDGET_KEY = "activity-tool-progress"
-const TOOL_PROGRESS_TICK_MS = 1_000
-const READY_LABEL = "READY · awaiting activity"
 
 export default function activityStatus(pi: ExtensionAPI): void {
   registerRuntimeVersion(pi, "activity-status", "2026.08.20.1")
@@ -34,26 +30,11 @@ export default function activityStatus(pi: ExtensionAPI): void {
   let latestCtx: ExtensionContext | undefined
   let classifierDepth = 0
   let pendingQuestionCount = 0
-  let throttleLabel: string | undefined
-  let progressTimer: ReturnType<typeof setInterval> | undefined
 
-  const actionLabel = (): string =>
+  const actionLabel = (): string | undefined =>
     pendingQuestionCount > 0
       ? `ACTION REQUIRED · ${pendingQuestionCount} question${pendingQuestionCount === 1 ? "" : "s"} · /questions`
-      : READY_LABEL
-
-  const questionLabel = (): string =>
-    [throttleLabel, actionLabel()].filter(Boolean).join(" · ")
-
-  const withQuestionLabel = (label: string): string => {
-    const persistent = [
-      throttleLabel,
-      pendingQuestionCount > 0 ? actionLabel() : undefined,
-    ].filter(Boolean)
-    return persistent.length > 0
-      ? `${label} · ${persistent.join(" · ")}`
-      : label
-  }
+      : undefined
 
   const show = (phase: ActivityPhase, ctx = latestCtx): void => {
     if (!ctx) return
@@ -62,46 +43,27 @@ export default function activityStatus(pi: ExtensionAPI): void {
     ctx.ui.setStatus(STATUS_KEY, phase.label)
   }
 
-  const stopProgressTicker = (): void => {
-    if (progressTimer) clearInterval(progressTimer)
-    progressTimer = undefined
-  }
-
-  const setProgressWidget = (label: string, ctx = latestCtx): void => {
+  const setProgressWidget = (
+    label: string | undefined,
+    ctx = latestCtx,
+  ): void => {
     if (!ctx) return
+    if (label === undefined) {
+      ctx.ui.setWidget(TOOL_PROGRESS_WIDGET_KEY, undefined)
+      return
+    }
     ctx.ui.setWidget(
       TOOL_PROGRESS_WIDGET_KEY,
       () => ({
         render: (width: number) => [alignChromeLine(label, width)],
         invalidate: () => {},
       }),
-      { placement: "belowEditor" },
+      { placement: "aboveEditor" },
     )
   }
 
-  const clearToolProgress = (ctx = latestCtx): void => {
-    stopProgressTicker()
-    setProgressWidget(questionLabel(), ctx)
-  }
-
   const showRunningTools = (ctx = latestCtx): void => {
-    if (!ctx) return
-    const tools = [...runningTools.values()]
-    const phase = runningToolProgressPhase(tools, Date.now())
-    show(phase, ctx)
-    if (tools.length > 0) {
-      setProgressWidget(withQuestionLabel(phase.label), ctx)
-    } else {
-      setProgressWidget(questionLabel(), ctx)
-    }
-  }
-
-  const startProgressTicker = (ctx: ExtensionContext): void => {
-    if (progressTimer) return
-    progressTimer = setInterval(() => {
-      if (classifierDepth === 0 && runningTools.size > 0) showRunningTools(ctx)
-    }, TOOL_PROGRESS_TICK_MS)
-    progressTimer.unref()
+    show(runningToolProgressPhase([...runningTools.values()], Date.now()), ctx)
   }
 
   pi.events.on(
@@ -110,8 +72,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
       pendingQuestionCount = Math.max(0, pending)
       if (!latestCtx) return
 
-      if (runningTools.size > 0) showRunningTools(latestCtx)
-      else setProgressWidget(questionLabel(), latestCtx)
+      setProgressWidget(actionLabel(), latestCtx)
     },
   )
 
@@ -131,9 +92,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
     latestCtx = ctx
     runningTools.clear()
     classifierDepth = 0
-    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
-    clearToolProgress(ctx)
-    ctx.ui.setStatus(STATUS_KEY, throttleLabel)
+    setProgressWidget(actionLabel(), ctx)
     ctx.ui.setWorkingIndicator({ frames: ["●"] })
     ctx.ui.setWorkingMessage()
   })
@@ -141,8 +100,7 @@ export default function activityStatus(pi: ExtensionAPI): void {
   pi.on("agent_start", (_event, ctx) => {
     latestCtx = ctx
     runningTools.clear()
-    throttleLabel = usageThrottleLabel(ctx.cwd, homedir(), ctx.model?.provider)
-    clearToolProgress(ctx)
+    setProgressWidget(actionLabel(), ctx)
     show({ kind: "model", label: "MODEL · awaiting generation" }, ctx)
   })
 
@@ -167,7 +125,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
       event.toolCallId,
       startToolProgress(event.toolName, Date.now()),
     )
-    startProgressTicker(ctx)
     if (classifierDepth === 0) showRunningTools(ctx)
   })
 
@@ -184,7 +141,6 @@ export default function activityStatus(pi: ExtensionAPI): void {
 
   pi.on("tool_execution_end", (event, ctx) => {
     runningTools.delete(event.toolCallId)
-    if (runningTools.size === 0) stopProgressTicker()
     if (classifierDepth === 0) showRunningTools(ctx)
   })
 
@@ -202,18 +158,16 @@ export default function activityStatus(pi: ExtensionAPI): void {
   pi.on("agent_end", (_event, ctx) => {
     runningTools.clear()
     classifierDepth = 0
-    clearToolProgress(ctx)
-    ctx.ui.setStatus(STATUS_KEY, throttleLabel)
+    setProgressWidget(actionLabel(), ctx)
     ctx.ui.setWorkingMessage()
   })
 
   pi.on("session_shutdown", (_event, ctx) => {
     runningTools.clear()
-    clearToolProgress(ctx)
+    setProgressWidget(actionLabel(), ctx)
     ctx.ui.setStatus(STATUS_KEY, undefined)
     ctx.ui.setWorkingIndicator()
     ctx.ui.setWorkingMessage()
-    throttleLabel = undefined
     latestCtx = undefined
   })
 }

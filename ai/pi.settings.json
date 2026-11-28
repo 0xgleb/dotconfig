@@ -12,6 +12,7 @@
   },
   "packages": [
     "/Users/0xgleb/.config/ai/pi/extensions",
-    "npm:pi-live-codex@0.1.7"
+    "npm:pi-live-codex@0.1.7",
+    "npm:pi-footer@0.5.1"
   ]
 }

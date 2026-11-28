@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "enabled": true,
+  "separator": "dot",
+  "lines": [
+    [
+      { "type": "cwd", "options": { "cwdDisplayStyle": "full-home" } },
+      { "type": "flex-separator" },
+      { "type": "model" },
+      { "type": "thinking-level", "options": { "hideWhenEmpty": true } },
+      { "type": "context" },
+      { "type": "context-window" }
+    ]
+  ],
+  "extensionStatusRow": {
+    "hiddenKeys": ["activity-phase"]
+  }
+}

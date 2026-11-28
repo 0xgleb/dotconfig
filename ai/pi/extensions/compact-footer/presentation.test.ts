@@ -15,10 +15,6 @@ const input: FooterPresentation = {
   thinkingLevel: "high",
   contextPercent: 12.34,
   contextWindow: 372_000,
-  cacheHitRate: 98.76,
-  inputTokens: 12_400,
-  outputTokens: 4_200,
-  statuses: ["/goal · 2 turns"],
 }
 
 test("footer is a single readable line with spaced groups", () => {
@@ -27,8 +23,46 @@ test("footer is a single readable line with spaced groups", () => {
   assert.equal(footer.split("\n").length, 1)
   assert.equal(
     footer,
-    "~/code/st0x (feat/footer)  ·  ctx 12.3% of 372k  ·  cache 98.8%  ·  ↑12k ↓4.2k  ·  gpt-5.6-sol / high  ·  /goal · 2 turns",
+    "~/code/st0x (feat/footer) · ctx 12.3% of 372k · gpt-5.6-sol / high",
   )
+})
+
+test("narrow panes shorten location before dropping context or model details", () => {
+  const line = formatFooter(
+    { ...input, cwd: "~/code/dataclique/dex-offender", branch: "main" },
+    68,
+  )
+  assert.equal(visibleWidth(line), 68)
+  assert.match(
+    line,
+    /\.\.\.\/dex-offender \(main\) +· +ctx 12\.3% of 372k +· +gpt-5\.6-sol \/ high/,
+  )
+})
+
+test("narrow footer preserves a short home path without embedded color resets", () => {
+  const line = formatFooter(
+    {
+      ...input,
+      cwd: "~/.config",
+      branch: "gitbutler/workspace",
+      modelId: "gpt-6.2-sol",
+      contextWindow: 500_000,
+      contextPercent: 72.6,
+    },
+    70,
+  )
+  assert.equal(visibleWidth(line), 70)
+  assert.ok(line.includes("~/.config (gitbutler/workspace)"))
+  assert.ok(line.includes("500k") && line.includes("72.6%"))
+  assert.ok(line.includes("gpt-6.2-sol") && line.includes("high"))
+  assert.ok(!line.includes("\x1b"))
+})
+
+test("wide panes distribute groups across the available width", () => {
+  const line = formatFooter(input, 120)
+  assert.equal(visibleWidth(line), 120)
+  assert.ok(line.indexOf("ctx") > 35)
+  assert.ok(line.endsWith("gpt-5.6-sol / high "))
 })
 
 test("footer shares the pane-relative chrome gutter at adjacent widths", () => {
@@ -58,7 +92,6 @@ test("footer handles unknown usage without inventing a percentage", () => {
     formatFooter({
       ...input,
       contextPercent: undefined,
-      cacheHitRate: undefined,
     }),
     /ctx \? of 372k/,
   )
