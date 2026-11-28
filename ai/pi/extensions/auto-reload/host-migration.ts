@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, relative, sep } from "node:path"
 
 export const HOST_MIGRATION_DRAFT_ENV = "PI_HOST_MIGRATION_EDITOR_DRAFT"
+export const HOST_MIGRATION_DISCLOSURE_ENV = "PI_HOST_MIGRATION_TOOLS_EXPANDED"
 export const HOST_MIGRATION_RESUME_ENV = "PI_HOST_MIGRATION_RESUME"
 
 const belongsToRoot = (candidate: string, root: string): boolean => {
@@ -57,6 +58,7 @@ export const hostMigrationEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   editorDraft: string,
   resume: boolean,
+  toolsExpanded?: boolean,
 ): Record<string, string> => ({
   ...Object.fromEntries(
     Object.entries(environment).filter(
@@ -64,5 +66,10 @@ export const hostMigrationEnvironment = (
     ),
   ),
   [HOST_MIGRATION_DRAFT_ENV]: editorDraft,
+  ...(toolsExpanded === undefined
+    ? {}
+    : {
+        [HOST_MIGRATION_DISCLOSURE_ENV]: toolsExpanded ? "1" : "0",
+      }),
   ...(resume ? { [HOST_MIGRATION_RESUME_ENV]: "1" } : {}),
 })

@@ -9,6 +9,10 @@ import {
 import { Text } from "@earendil-works/pi-tui"
 import * as Effect from "effect/Effect"
 
+import {
+  HOST_MIGRATION_DISCLOSURE_ENV,
+  HOST_MIGRATION_DRAFT_ENV,
+} from "../auto-reload/host-migration.ts"
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
 import { executeWithContextCwd } from "./contextual-tool.ts"
 import { readResultPresentation, type ReadOutput } from "./presentation.ts"
@@ -38,9 +42,12 @@ export default function compactRead(pi: ExtensionAPI): void {
   const originalRead = createReadTool(process.cwd())
   const originalEdit = createEditTool(process.cwd())
 
+  const replacingHost = process.env[HOST_MIGRATION_DRAFT_ENV] !== undefined
+  const toolsExpanded = process.env[HOST_MIGRATION_DISCLOSURE_ENV]
+  delete process.env[HOST_MIGRATION_DISCLOSURE_ENV]
   pi.on("session_start", (event, ctx) => {
     if (event.reason === "startup" && ctx.mode === "tui") {
-      ctx.ui.setToolsExpanded(true)
+      ctx.ui.setToolsExpanded(replacingHost ? toolsExpanded === "1" : true)
     }
   })
 
