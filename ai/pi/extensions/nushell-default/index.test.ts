@@ -39,6 +39,12 @@ test("the rendered Nushell header is separated from the unbolded script", async 
   assert.doesNotMatch(rows[0] ?? "", /check/u)
   view.render(140)
   assert.equal(calls, 1)
+  const timed = renderNushellCall(
+    { command: "echo fixture", timeout: 3 },
+    theme,
+    () => undefined,
+  ).render(42)
+  assert.deepEqual(timed.slice(-2), ["", "muted:timeout 3s"])
   assert.equal(rows[1], "")
   assert.equal(rows[2], "\u001b[32mecho\u001b[22;23;24;25;27;28;29;39m fixture")
 })

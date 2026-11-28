@@ -78,6 +78,7 @@ export const renderNushellCall = (
         ...preview.commandLines.map(line =>
           line.replace(/\u001b\[(?:0|)m/gu, "\u001b[22;23;24;25;27;28;29;39m"),
         ),
+        ...(preview.timeoutLines.length > 0 ? [""] : []),
         ...preview.timeoutLines.map(line => theme.fg("muted", line)),
       ]
     },
