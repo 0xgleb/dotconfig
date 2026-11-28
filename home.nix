@@ -90,6 +90,13 @@ let
   unstable = import inputs.nixpkgs-unstable {
     inherit system;
     config.allowUnfree = true;
+    overlays = [
+      (_final: previous: {
+        pi-coding-agent = previous.pi-coding-agent.overrideAttrs (attrs: {
+          patches = (attrs.patches or [ ]) ++ [ ./ai/pi/host/reply-width.patch ];
+        });
+      })
+    ];
   };
   nuConfigDir =
     if isDarwin && !config.xdg.enable then
