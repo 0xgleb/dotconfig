@@ -35,9 +35,10 @@ test("the rendered Nushell header is separated from the unbolded script", async 
     () => undefined,
     () => "check",
   ).render(42)
-  assert.match(completed[0] ?? "", /Nushell {3,}check$/u)
+  assert.match(completed[0] ?? "", /Nushell {3,}check $/u)
   const { visibleWidth } = await import("@earendil-works/pi-tui")
   assert.equal(visibleWidth(completed[0] ?? ""), 42)
+  assert.match(completed[0] ?? "", /^ .*check $/u)
   assert.doesNotMatch(rows[0] ?? "", /check/u)
   view.render(140)
   assert.equal(calls, 1)
@@ -46,9 +47,12 @@ test("the rendered Nushell header is separated from the unbolded script", async 
     theme,
     () => undefined,
   ).render(42)
-  assert.deepEqual(timed.slice(-2), ["", "muted:timeout 3s"])
+  assert.deepEqual(timed.slice(-2), ["", " muted:timeout 3s "])
   assert.equal(rows[1], "")
-  assert.equal(rows[2], "\u001b[32mecho\u001b[22;23;24;25;27;28;29;39m fixture")
+  assert.equal(
+    rows[2],
+    " \u001b[32mecho\u001b[22;23;24;25;27;28;29;39m fixture ",
+  )
 })
 
 test("syntax-aware continuation rows retain highlighting", async () => {

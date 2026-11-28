@@ -42,6 +42,14 @@ export const nushellPromptGuidelines = [
   "Write native Nushell commands. Put sequential statements on literal newlines instead of separating them with semicolons, and keep each line concise for the current terminal width.",
 ] as const
 
+const insetCardContent = (body: Component): Component => ({
+  render: width =>
+    width < 3
+      ? body.render(width)
+      : body.render(width - 2).map(row => (row ? ` ${row} ` : row)),
+  invalidate: () => body.invalidate(),
+})
+
 export const renderNushellCall = (
   args: BashToolInput,
   theme: Pick<Theme, "fg" | "bold">,
@@ -68,7 +76,7 @@ export const renderNushellCall = (
           .map(line => [stripVTControlCharacters(line), line] as const) ?? [],
     ),
   )
-  return {
+  return insetCardContent({
     render: width => {
       latestNushellTuiWidth = width
       const preview = nushellToolPreviewLines(
@@ -94,7 +102,7 @@ export const renderNushellCall = (
       ]
     },
     invalidate: () => undefined,
-  }
+  })
 }
 
 export default function nushellDefault(pi: ExtensionAPI): void {
@@ -179,7 +187,8 @@ export default function nushellDefault(pi: ExtensionAPI): void {
         theme,
         context,
       )
-      if (options.isPartial) return original ?? new Text("", 0, 0)
+      if (options.isPartial)
+        return insetCardContent(original ?? new Text("", 0, 0))
       const first = result.content[0]
       const outcome = commandOutcome(
         context.isError,
@@ -195,8 +204,8 @@ export default function nushellDefault(pi: ExtensionAPI): void {
             : outcome.icon
       outcomes.set(context.state, icon)
       if (outcome.icon === "▲")
-        return verdictView(undefined, outcome.explanation)
-      return original ?? new Text("", 0, 0)
+        return insetCardContent(verdictView(undefined, outcome.explanation))
+      return insetCardContent(original ?? new Text("", 0, 0))
     },
   })
 }
