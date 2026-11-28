@@ -5,7 +5,7 @@ import { join } from "node:path"
 const runNufmt = (raw: string): string | undefined => {
   if (Buffer.byteLength(raw) > 32_768) return undefined
   const result = spawnSync(
-    join(homedir(), ".nix-profile/bin/nufmt"),
+    join(homedir(), ".pi/agent/bin/nufmt"),
     ["--stdin"],
     {
       input: raw,

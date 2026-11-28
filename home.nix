@@ -286,6 +286,7 @@ in
 
     file = {
       "${nuConfigDir}/fj".source = "${jf.fjLib}/fj";
+      ".pi/agent/bin/nufmt".source = "${unstable.nufmt}/bin/nufmt";
       ".agents/skills".source = skills;
       ".claude/skills".source = skills;
       ".cursor/skills".source = skills;
