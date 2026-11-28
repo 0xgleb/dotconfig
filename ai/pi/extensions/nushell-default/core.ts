@@ -90,7 +90,7 @@ export const nushellToolPreviewLines = (
   width: number,
   wrapLine: PreviewLineWrapper = wrapPreviewLine,
 ): { readonly commandLines: string[]; readonly timeoutLines: string[] } => {
-  const safeWidth = Math.max(1, Math.floor(width))
+  const safeWidth = Math.max(1, Math.min(80, Math.floor(width)))
   return {
     commandLines: nushellCommandPreviewLines(command, safeWidth, wrapLine),
     timeoutLines: timeout ? wrapLine(`timeout ${timeout}s`, safeWidth) : [],
