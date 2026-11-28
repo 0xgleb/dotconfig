@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { stripVTControlCharacters } from "node:util"
 import { nushellToolPreviewLines } from "./core.ts"
 import { breakAtNushellBoundaries } from "./display-boundaries.ts"
 import { formatCommandForDisplay } from "./display-format.ts"
@@ -29,6 +30,13 @@ test("quoted GraphQL punctuation survives preview preprocessing", () => {
     breakAtNushellBoundaries(`${command} | get data`, 32),
     `${command}\n  | get data`,
   )
+})
+
+test("an oversized GraphQL literal does not introduce continuation rows", () => {
+  const command = `gh api graphql -f query="${"fragment with spaces ".repeat(8)}"`
+  const { commandLines } = nushellToolPreviewLines(command, undefined, 42)
+  assert.equal(commandLines.length, 1)
+  assert.match(stripVTControlCharacters(commandLines[0] ?? ""), /…\s*$/u)
 })
 
 test("quoted regex escapes do not hide the real pipeline boundary", () => {

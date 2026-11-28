@@ -1,5 +1,8 @@
 import { existsSync } from "node:fs"
+import { truncateToWidth } from "@earendil-works/pi-tui"
 import { Data, Effect } from "effect"
+
+import { breakAtNushellBoundaries } from "./display-boundaries.ts"
 
 export class NushellUnavailableError extends Data.TaggedError(
   "NushellUnavailableError",
@@ -10,8 +13,6 @@ export class NushellUnavailableError extends Data.TaggedError(
 export type PathExists = (path: string) => boolean
 
 export type PreviewLineWrapper = (line: string, width: number) => string[]
-
-import { breakAtNushellBoundaries } from "./display-boundaries.ts"
 
 const DEFAULT_NUSHELL_TABLE_WIDTH = 80
 const PI_TOOL_CHROME_COLUMNS = 6
@@ -97,7 +98,7 @@ export const nushellToolPreviewLines = (
     commandLines: nushellCommandPreviewLines(
       breakAtNushellBoundaries(command, safeWidth - 2),
       safeWidth,
-      wrapLine,
+      (line, available) => [truncateToWidth(line, available, "…")],
     ),
     timeoutLines: timeout ? wrapLine(`timeout ${timeout}s`, safeWidth) : [],
   }
