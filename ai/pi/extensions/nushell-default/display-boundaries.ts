@@ -83,10 +83,13 @@ export const breakAtNushellBoundaries = (
   let offset = 0
   let indent = ""
   const rows = breaks.map(boundary => {
-    const row = indent + text.slice(offset, boundary.index).trim()
+    const segment = text.slice(offset, boundary.index).trim()
+    const row = indent + segment
+    const separatesStatement =
+      /^[})];$/u.test(segment) && text.slice(boundary.index).trim().length > 0
     offset = boundary.index
     indent = boundary.indent
-    return row
+    return separatesStatement ? `${row}\n` : row
   })
   return [...rows, indent + text.slice(offset).trim()].join("\n")
 }

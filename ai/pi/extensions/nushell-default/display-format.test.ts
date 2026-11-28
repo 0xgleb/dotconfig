@@ -47,6 +47,16 @@ test("long where closures preserve their parameter header and block indentation"
   )
 })
 
+test("a closed block separates an independent statement, not its next pipeline stage", () => {
+  const block = 'ls | where {|row| $row.name =~ "long-pattern" }'
+  const formatted = breakAtNushellBoundaries(`${block}; print done`, 32)
+  assert.match(formatted, /\n  \};\n\nprint done$/u)
+  assert.match(
+    breakAtNushellBoundaries(`${block} | length`, 32),
+    /\n  \}\n  \| length$/u,
+  )
+})
+
 test("quoted regex escapes do not hide the real pipeline boundary", () => {
   const command = String.raw`ls | where name =~ '^foo\.[ab|c];{2}$'`
   assert.equal(
