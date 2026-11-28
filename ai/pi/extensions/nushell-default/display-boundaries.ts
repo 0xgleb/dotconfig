@@ -9,6 +9,7 @@ export const breakAtNushellBoundaries = (
   let quote: '"' | "'" | undefined
   let bodyStart = -1
   let bodyEnd = -1
+  let closure: { depth: number; indent: string } | undefined
 
   for (let index = 0; index < text.length; index++) {
     const char = text[index]
@@ -39,9 +40,30 @@ export const breakAtNushellBoundaries = (
         bodyStart = index
         breaks.push({ index: index + 1, indent: "  " })
       }
+      const preceding = breaks.at(-1)
+      const statement = text.slice(preceding?.index ?? 0, index).trim()
+      const parameters = /^\{\|[\w\s,]*\|/u.exec(text.slice(index))
+      if (
+        char === "{" &&
+        !closure &&
+        parameters &&
+        /^(?:\|\s*)?where$/u.test(statement)
+      ) {
+        const indent = preceding?.indent ?? ""
+        closure = { depth: stack.length, indent }
+        breaks.push({
+          index: index + parameters[0].length,
+          indent: `${indent}  `,
+        })
+        index += parameters[0].length - 1
+      }
       stack.push(char)
     } else if (char === "}" || char === "]" || char === ")") {
       if (stack.pop() !== { "}": "{", "]": "[", ")": "(" }[char]) return text
+      if (char === "}" && closure?.depth === stack.length) {
+        breaks.push({ index, indent: closure.indent })
+        closure = undefined
+      }
       if (char === "}" && stack.length === 0 && bodyStart >= 0 && bodyEnd < 0) {
         bodyEnd = index
         breaks.push({ index, indent: "" })

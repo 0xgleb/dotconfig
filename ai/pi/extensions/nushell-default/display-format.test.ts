@@ -39,6 +39,14 @@ test("an oversized GraphQL literal does not introduce continuation rows", () => 
   assert.match(stripVTControlCharacters(commandLines[0] ?? ""), /…\s*$/u)
 })
 
+test("long where closures preserve their parameter header and block indentation", () => {
+  const command = 'ls | where {|row| $row.name =~ "long-pattern" }'
+  assert.equal(
+    breakAtNushellBoundaries(command, 32),
+    'ls\n  | where {|row|\n    $row.name =~ "long-pattern"\n  }',
+  )
+})
+
 test("quoted regex escapes do not hide the real pipeline boundary", () => {
   const command = String.raw`ls | where name =~ '^foo\.[ab|c];{2}$'`
   assert.equal(
