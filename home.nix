@@ -91,6 +91,12 @@ let
     inherit system;
     config.allowUnfree = true;
   };
+  piWithPrivateTraces = unstable.pi-coding-agent.overrideAttrs (previous: {
+    patches = (previous.patches or [ ]) ++ [ ./ai/pi/host/private-extension-traces.patch ];
+    postPatch = (previous.postPatch or "") + ''
+      install -m 644 ${./ai/pi/host/extension-diagnostics.ts} packages/coding-agent/src/modes/interactive/extension-diagnostics.ts
+    '';
+  });
   nuConfigDir =
     if isDarwin && !config.xdg.enable then
       "Library/Application Support/nushell"
@@ -220,7 +226,7 @@ in
       let
         piSolReview = pkgs.writeShellApplication {
           name = "pi-sol-review";
-          runtimeInputs = [ unstable.pi-coding-agent ];
+          runtimeInputs = [ piWithPrivateTraces ];
           text = ''
             if [ "$#" -gt 0 ]; then
               prompt="$*"
@@ -258,7 +264,7 @@ in
         piControlPlane
         piControlPlaneWatch
         piSolReview
-        unstable.pi-coding-agent
+        piWithPrivateTraces
         pkgs.nixd
         pkgs.prek
         pkgs.prettier
@@ -297,7 +303,7 @@ in
         config.lib.file.mkOutOfStoreSymlink "${aiDir}/pi/manager.settings.json";
       ".pi/agent/bin/but".source = "${but}/bin/but";
       ".pi/agent/bin/but".force = true;
-      ".pi/agent/bin/pi".source = "${unstable.pi-coding-agent}/bin/pi";
+      ".pi/agent/bin/pi".source = "${piWithPrivateTraces}/bin/pi";
       ".pi/agent/bin/pi".force = true;
       ".pi/agent/bin/pi-control-plane".source = "${piControlPlane}/bin/pi-control-plane";
       ".pi/agent/bin/pi-control-plane".force = true;
