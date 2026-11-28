@@ -17,7 +17,7 @@ export const commandOutcome = (
       : null
   if (refusal) return { icon: "▲", explanation: text.slice(refusal[0].length) }
   return {
-    icon: failed ? (started && !blocked ? "✖" : "▲") : "●✓",
+    icon: failed ? (started && !blocked ? "✖" : "▲") : "",
     explanation: text,
   }
 }

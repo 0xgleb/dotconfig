@@ -16,6 +16,6 @@ test("distinguishes policy refusal from command failure and success", () => {
   )
   assert.equal(
     commandOutcome(false, "Auto-classifier verdict: literal output", true).icon,
-    "●✓",
+    "",
   )
 })

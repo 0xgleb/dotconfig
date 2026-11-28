@@ -95,7 +95,7 @@ export const nushellToolPreviewLines = (
 ): { header: string; commandLines: string[]; timeoutLines: string[] } => {
   const safeWidth = Math.max(1, Math.floor(width))
   return {
-    header: truncateToWidth(" Nushell", safeWidth, ""),
+    header: truncateToWidth("󰆍 Nushell", safeWidth, ""),
     commandLines: breakAtNushellBoundaries(command, safeWidth)
       .split("\n")
       .map(line => truncateToWidth(line, safeWidth, "…")),
