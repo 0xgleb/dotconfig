@@ -11,6 +11,8 @@ export type PathExists = (path: string) => boolean
 
 export type PreviewLineWrapper = (line: string, width: number) => string[]
 
+import { breakAtNushellBoundaries } from "./display-boundaries.ts"
+
 const DEFAULT_NUSHELL_TABLE_WIDTH = 80
 const PI_TOOL_CHROME_COLUMNS = 6
 
@@ -92,7 +94,11 @@ export const nushellToolPreviewLines = (
 ): { readonly commandLines: string[]; readonly timeoutLines: string[] } => {
   const safeWidth = Math.max(1, Math.floor(width))
   return {
-    commandLines: nushellCommandPreviewLines(command, safeWidth, wrapLine),
+    commandLines: nushellCommandPreviewLines(
+      breakAtNushellBoundaries(command, safeWidth - 2),
+      safeWidth,
+      wrapLine,
+    ),
     timeoutLines: timeout ? wrapLine(`timeout ${timeout}s`, safeWidth) : [],
   }
 }
