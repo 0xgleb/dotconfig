@@ -1,0 +1,30 @@
+--- a/packages/coding-agent/src/modes/interactive/components/tool-execution.ts
++++ b/packages/coding-agent/src/modes/interactive/components/tool-execution.ts
+@@ -211,4 +211,8 @@
++	getDisclosure(): readonly [string, boolean] {
++		return [this.toolCallId, this.expanded];
++	}
++
+ 	setExpanded(expanded: boolean): void {
+ 		this.expanded = expanded;
+ 		this.updateDisplay();
+ 	}
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -4356,4 +4356,16 @@
+ 	private rebuildChatFromMessages(): void {
++		const disclosure = new Map<string, boolean>();
++		for (const child of this.chatContainer.children) {
++			if (child instanceof ToolExecutionComponent) {
++				const [id, expanded] = child.getDisclosure();
++				disclosure.set(id, expanded);
++			}
++		}
+ 		this.chatContainer.clear();
+ 		this.renderSessionEntries(this.sessionManager.buildContextEntries());
++		for (const child of this.chatContainer.children) {
++			if (!(child instanceof ToolExecutionComponent)) continue;
++			const expanded = disclosure.get(child.getDisclosure()[0]);
++			if (expanded !== undefined) child.setExpanded(expanded);
++		}
+ 	}
