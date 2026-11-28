@@ -57,6 +57,13 @@ test("a closed block separates an independent statement, not its next pipeline s
   )
 })
 
+test("a long simple external invocation uses Nushell multiline arguments", () => {
+  assert.equal(
+    breakAtNushellBoundaries("^printf fixture alpha bravo charlie", 24),
+    "(^printf\n  fixture\n  alpha\n  bravo\n  charlie\n)",
+  )
+})
+
 test("quoted regex escapes do not hide the real pipeline boundary", () => {
   const command = String.raw`ls | where name =~ '^foo\.[ab|c];{2}$'`
   assert.equal(

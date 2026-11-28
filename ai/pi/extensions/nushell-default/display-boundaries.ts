@@ -78,7 +78,14 @@ export const breakAtNushellBoundaries = (
       }
     }
   }
-  if (quote || stack.length > 0 || breaks.length === 0) return text
+  if (quote || stack.length > 0) return text
+  if (breaks.length === 0) {
+    const command = text.trim()
+    if (!/^\^[a-zA-Z][\w-]*(?: +[a-zA-Z0-9][\w.-]*){2,}$/u.test(command))
+      return text
+    const [head, ...args] = command.split(/ +/u)
+    return [`(${head}`, ...args.map(arg => `  ${arg}`), ")"].join("\n")
+  }
 
   let offset = 0
   let indent = ""
