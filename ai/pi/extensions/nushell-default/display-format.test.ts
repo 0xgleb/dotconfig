@@ -70,6 +70,19 @@ test("quoted GraphQL punctuation survives preview preprocessing", () => {
   )
 })
 
+test("expanded previews retain every character of a long quoted literal", () => {
+  const raw = 'gh api graphql -f query="a  long literal with 界 and spaces"'
+  const { commandLines } = nushellToolPreviewLines(
+    raw,
+    undefined,
+    13,
+    undefined,
+    undefined,
+    true,
+  )
+  assert.equal(commandLines.map(stripVTControlCharacters).join(""), raw)
+})
+
 test("an oversized GraphQL literal does not introduce continuation rows", () => {
   const command = `gh api graphql -f query="${"fragment with spaces ".repeat(8)}"`
   const { commandLines } = nushellToolPreviewLines(command, undefined, 42)

@@ -55,6 +55,7 @@ export const renderNushellCall = (
   theme: Pick<Theme, "fg" | "bold">,
   highlight: (script: string) => string | undefined = highlightNushellPreview,
   readOutcome: () => string | undefined = () => undefined,
+  expanded = false,
 ): Component => {
   const command =
     typeof args.command === "string" && args.command.length > 0
@@ -85,6 +86,7 @@ export const renderNushellCall = (
         width,
         wrapTextWithAnsi,
         line => colorsByLine.get(line) ?? theme.fg("toolOutput", line),
+        expanded,
       )
       const outcome = readOutcome()
       const title = theme.fg("toolTitle", theme.bold(preview.header))
@@ -177,8 +179,12 @@ export default function nushellDefault(pi: ExtensionAPI): void {
     },
 
     renderCall: (args, theme, context) =>
-      renderNushellCall(args, theme, undefined, () =>
-        outcomes.get(context.state),
+      renderNushellCall(
+        args,
+        theme,
+        undefined,
+        () => outcomes.get(context.state),
+        context.expanded,
       ),
     renderResult(result, options, theme, context) {
       const original = definition.renderResult?.(
