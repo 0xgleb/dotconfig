@@ -47,7 +47,7 @@ test("the rendered Nushell header is separated from the unbolded script", async 
     theme,
     () => undefined,
   ).render(42)
-  assert.deepEqual(timed.slice(-2), ["", " muted:timeout 3s "])
+  assert.deepEqual(timed.slice(-3), ["", " muted:timeout 3s ", ""])
   assert.equal(rows[1], "")
   assert.equal(
     rows[2],

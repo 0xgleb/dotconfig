@@ -101,6 +101,7 @@ export const renderNushellCall = (
         ),
         ...(preview.timeoutLines.length > 0 ? [""] : []),
         ...preview.timeoutLines.map(line => theme.fg("muted", line)),
+        ...(preview.timeoutLines.length > 0 ? [""] : []),
       ]
     },
     invalidate: () => undefined,
