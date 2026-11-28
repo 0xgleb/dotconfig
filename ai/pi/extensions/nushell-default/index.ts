@@ -23,6 +23,7 @@ import {
 
 import { formatCommandForDisplay } from "./display-format.ts"
 import { commandOutcome } from "./outcome.ts"
+import { resultRows } from "./result-layout.ts"
 import { verdictView } from "./verdict-view.ts"
 
 let latestNushellTuiWidth: number | undefined
@@ -149,9 +150,15 @@ export default function nushellDefault(pi: ExtensionAPI): void {
         result.details,
       )
       if (outcome.icon === "▲")
-        return verdictView(outcome.icon, outcome.explanation)
+        return verdictView(theme.fg("warning", "󰀪"), outcome.explanation)
       return {
-        render: width => [outcome.icon, ...(original?.render(width) ?? [])],
+        render: width =>
+          resultRows(
+            outcome.icon === ""
+              ? theme.fg("muted", outcome.icon)
+              : outcome.icon,
+            original?.render(width) ?? [],
+          ),
         invalidate: () => original?.invalidate(),
       }
     },
