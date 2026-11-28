@@ -4,7 +4,12 @@ import {
   type ExtensionAPI,
   type Theme,
 } from "@earendil-works/pi-coding-agent"
-import { Text, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui"
+import {
+  Text,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+} from "@earendil-works/pi-tui"
 import { Effect, Either } from "effect"
 
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
@@ -74,9 +79,12 @@ export const renderNushellCall = (
         line => colorsByLine.get(line) ?? theme.fg("toolOutput", line),
       )
       const outcome = readOutcome()
+      const title = theme.fg("toolTitle", theme.bold(preview.header))
+      const gap = outcome
+        ? width - visibleWidth(title) - visibleWidth(outcome)
+        : 0
       return [
-        theme.fg("toolTitle", theme.bold(preview.header)) +
-          (outcome && width >= 12 ? `  ${outcome}` : ""),
+        outcome && gap >= 2 ? `${title}${" ".repeat(gap)}${outcome}` : title,
         "",
         ...preview.commandLines.map(line =>
           line.replace(/\u001b\[(?:0|)m/gu, "\u001b[22;23;24;25;27;28;29;39m"),

@@ -35,7 +35,9 @@ test("the rendered Nushell header is separated from the unbolded script", async 
     () => undefined,
     () => "check",
   ).render(42)
-  assert.match(completed[0] ?? "", /Nushell  check$/u)
+  assert.match(completed[0] ?? "", /Nushell {3,}check$/u)
+  const { visibleWidth } = await import("@earendil-works/pi-tui")
+  assert.equal(visibleWidth(completed[0] ?? ""), 42)
   assert.doesNotMatch(rows[0] ?? "", /check/u)
   view.render(140)
   assert.equal(calls, 1)
