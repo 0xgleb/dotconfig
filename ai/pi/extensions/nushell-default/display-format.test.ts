@@ -76,6 +76,16 @@ test("blank rows surround a continued pipeline only at statement boundaries", ()
   )
 })
 
+test("long external arguments are separated from neighboring statements", () => {
+  assert.equal(
+    breakAtNushellBoundaries(
+      "print before; ^echo alpha bravo charlie; print after",
+      20,
+    ),
+    "print before;\n\n(^echo\n  alpha\n  bravo\n  charlie\n);\n\nprint after",
+  )
+})
+
 test("a long simple external invocation uses Nushell multiline arguments", () => {
   assert.equal(
     breakAtNushellBoundaries("^printf fixture alpha bravo charlie", 24),

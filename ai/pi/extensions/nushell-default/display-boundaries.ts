@@ -103,20 +103,34 @@ export const breakAtNushellBoundaries = (
   let offset = 0
   let indent = ""
   const statements: string[][] = []
+  const finish = (lines: string[]) => {
+    const first = lines[0]
+    const command = first?.replace(/;$/u, "")
+    if (lines.length === 1 && first && command && first.length > width) {
+      const expanded = breakAtNushellBoundaries(command, width)
+      if (expanded.includes("\n")) {
+        statements.push(
+          (expanded + (first.endsWith(";") ? ";" : "")).split("\n"),
+        )
+        return
+      }
+    }
+    statements.push(lines)
+  }
   let rows: string[] = []
   for (const boundary of breaks) {
     const segment = text.slice(offset, boundary.index).trim()
     const row = indent + segment
     rows.push(row)
     if (boundary.statementEnd) {
-      statements.push(rows)
+      finish(rows)
       rows = []
     }
     offset = boundary.index
     indent = boundary.indent
   }
   const tail = text.slice(offset).trim()
-  if (tail || rows.length > 0) statements.push([...rows, indent + tail])
+  if (tail || rows.length > 0) finish([...rows, indent + tail])
   if (expandedClosure && !keepClosurePipeline && width > 0) {
     const inline = breakAtNushellBoundaries(text, 0, true)
     if (inline.split("\n").every(line => line.length <= width)) return inline
