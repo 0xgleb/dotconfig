@@ -4,7 +4,12 @@ import {
   type ExtensionAPI,
   type Theme,
 } from "@earendil-works/pi-coding-agent"
-import { wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui"
+import {
+  Text,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+} from "@earendil-works/pi-tui"
 import { Effect, Either } from "effect"
 
 import { registerRuntimeVersion } from "../shared/runtime-version.ts"
@@ -21,6 +26,15 @@ import {
   runDirenvExportProcess,
 } from "./direnv.ts"
 
+import {
+  formatCommandForDisplay,
+  highlightNushellPreview,
+} from "./display-format.ts"
+import { stripVTControlCharacters } from "node:util"
+import { commandOutcome } from "./outcome.ts"
+import { breakAtNushellBoundaries } from "./display-boundaries.ts"
+import { verdictView } from "./verdict-view.ts"
+
 let latestNushellTuiWidth: number | undefined
 
 export const nushellPromptGuidelines = [
@@ -28,33 +42,70 @@ export const nushellPromptGuidelines = [
   "Write native Nushell commands. Put sequential statements on literal newlines instead of separating them with semicolons, and keep each line concise for the current terminal width.",
 ] as const
 
+const insetCardContent = (body: Component): Component => ({
+  render: width =>
+    width < 3
+      ? body.render(width)
+      : body.render(width - 2).map(row => (row ? ` ${row} ` : row)),
+  invalidate: () => body.invalidate(),
+})
+
 export const renderNushellCall = (
   args: BashToolInput,
-  theme: Theme,
+  theme: Pick<Theme, "fg" | "bold">,
+  highlight: (script: string) => string | undefined = highlightNushellPreview,
+  readOutcome: () => string | undefined = () => undefined,
+  expanded = false,
 ): Component => {
   const command =
     typeof args.command === "string" && args.command.length > 0
       ? args.command
       : "..."
 
-  return {
+  const display = formatCommandForDisplay(command)
+  const broken = breakAtNushellBoundaries(display, 0)
+  const colored = highlight(display)
+  const coloredBroken = broken === display ? colored : highlight(broken)
+  const inline = breakAtNushellBoundaries(display, 0, true)
+  const coloredInline =
+    inline === display || inline === broken ? undefined : highlight(inline)
+  const colorsByLine = new Map(
+    [colored, coloredBroken, coloredInline].flatMap(
+      script =>
+        script
+          ?.split("\n")
+          .map(line => [stripVTControlCharacters(line), line] as const) ?? [],
+    ),
+  )
+  return insetCardContent({
     render: width => {
       latestNushellTuiWidth = width
       const preview = nushellToolPreviewLines(
-        command,
+        display,
         args.timeout,
         width,
         wrapTextWithAnsi,
+        line => colorsByLine.get(line) ?? theme.fg("toolOutput", line),
+        expanded,
       )
+      const outcome = readOutcome()
+      const title = theme.fg("toolTitle", theme.bold(preview.header))
+      const gap = outcome
+        ? width - visibleWidth(title) - visibleWidth(outcome)
+        : 0
       return [
+        outcome && gap >= 2 ? `${title}${" ".repeat(gap)}${outcome}` : title,
+        "",
         ...preview.commandLines.map(line =>
-          theme.fg("toolTitle", theme.bold(line)),
+          line.replace(/\u001b\[(?:0|)m/gu, "\u001b[22;23;24;25;27;28;29;39m"),
         ),
+        ...(preview.timeoutLines.length > 0 ? [""] : []),
         ...preview.timeoutLines.map(line => theme.fg("muted", line)),
+        ...(preview.timeoutLines.length > 0 ? [""] : []),
       ]
     },
     invalidate: () => undefined,
-  }
+  })
 }
 
 export default function nushellDefault(pi: ExtensionAPI): void {
@@ -80,6 +131,7 @@ export default function nushellDefault(pi: ExtensionAPI): void {
   })
   const definition = createBashToolDefinition(process.cwd(), { shellPath })
 
+  const outcomes = new WeakMap<object, string>()
   pi.registerTool({
     ...definition,
     description:
@@ -127,6 +179,40 @@ export default function nushellDefault(pi: ExtensionAPI): void {
       }).execute(toolCallId, params, signal, onUpdate, ctx)
     },
 
-    renderCall: renderNushellCall,
+    renderCall: (args, theme, context) =>
+      renderNushellCall(
+        args,
+        theme,
+        undefined,
+        () => outcomes.get(context.state),
+        context.expanded,
+      ),
+    renderResult(result, options, theme, context) {
+      const original = definition.renderResult?.(
+        result,
+        options,
+        theme,
+        context,
+      )
+      if (options.isPartial)
+        return insetCardContent(original ?? new Text("", 0, 0))
+      const first = result.content[0]
+      const outcome = commandOutcome(
+        context.isError,
+        first?.type === "text" ? first.text : "",
+        context.executionStarted,
+        result.details,
+      )
+      const icon =
+        outcome.icon === "▲"
+          ? theme.fg("warning", "󰀪")
+          : outcome.icon === ""
+            ? theme.fg("muted", outcome.icon)
+            : outcome.icon
+      outcomes.set(context.state, icon)
+      if (outcome.icon === "▲")
+        return insetCardContent(verdictView(undefined, outcome.explanation))
+      return insetCardContent(original ?? new Text("", 0, 0))
+    },
   })
 }

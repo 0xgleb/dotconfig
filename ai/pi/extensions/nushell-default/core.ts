@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs"
+import {
+  sliceByColumn,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui"
 import { Data, Effect } from "effect"
+
+import { breakAtNushellBoundaries } from "./display-boundaries.ts"
 
 export class NushellUnavailableError extends Data.TaggedError(
   "NushellUnavailableError",
@@ -77,11 +84,26 @@ export const nushellCommandPreviewLines = (
       (line, wrappedLineIndex) =>
         `${
           sourceLineIndex === firstCommandLine && wrappedLineIndex === 0
-            ? "$ "
+            ? "ν "
             : "  "
         }${line}`,
     )
   })
+}
+
+const continuePreviewLine = (line: string, width: number): string[] => {
+  const columns = visibleWidth(line)
+  if (columns <= width) return [line]
+
+  const rows: string[] = []
+  for (let offset = 0; offset < columns;) {
+    const fitting = sliceByColumn(line, offset, width, true)
+    const row =
+      visibleWidth(fitting) > 0 ? fitting : sliceByColumn(line, offset, width)
+    rows.push(row)
+    offset += Math.max(1, visibleWidth(row))
+  }
+  return rows
 }
 
 export const nushellToolPreviewLines = (
@@ -89,10 +111,20 @@ export const nushellToolPreviewLines = (
   timeout: number | undefined,
   width: number,
   wrapLine: PreviewLineWrapper = wrapPreviewLine,
-): { readonly commandLines: string[]; readonly timeoutLines: string[] } => {
+  styleLine: (line: string) => string = line => line,
+  expanded = false,
+): { header: string; commandLines: string[]; timeoutLines: string[] } => {
   const safeWidth = Math.max(1, Math.floor(width))
   return {
-    commandLines: nushellCommandPreviewLines(command, safeWidth, wrapLine),
+    header: truncateToWidth("󰆍 Nushell", safeWidth, ""),
+    commandLines: breakAtNushellBoundaries(command, safeWidth)
+      .split("\n")
+      .flatMap(line => {
+        const styled = styleLine(line)
+        return expanded
+          ? continuePreviewLine(styled, safeWidth)
+          : [truncateToWidth(styled, safeWidth, "…")]
+      }),
     timeoutLines: timeout ? wrapLine(`timeout ${timeout}s`, safeWidth) : [],
   }
 }

@@ -1,0 +1,10 @@
+--- a/packages/agent/src/agent-loop.ts
++++ b/packages/agent/src/agent-loop.ts
+@@ -753,6 +753,7 @@
+ 			}
+ 			if (beforeResult?.block) {
+ 				const result = createErrorToolResult(beforeResult.reason || "Tool execution was blocked");
++				result.details = { blockedBeforeExecution: true };
+ 				if (beforeResult.terminate === true) {
+ 					result.terminate = true;
+ 				}

@@ -16,6 +16,66 @@ const resolveNushellPath = (
   ...args: Parameters<typeof resolveNushellPathEffect>
 ) => Effect.runSync(resolveNushellPathEffect(...args))
 
+test("the rendered Nushell header is separated from the unbolded script", async () => {
+  const { renderNushellCall } = await import("./index.ts")
+  const theme = {
+    fg: (color: string, text: string) => `${color}:${text}`,
+    bold: (text: string) => `bold:${text}`,
+  }
+  let calls = 0
+  const view = renderNushellCall({ command: "echo fixture" }, theme, script => {
+    calls++
+    assert.equal(script, "echo fixture")
+    return "\u001b[32mecho\u001b[0m fixture"
+  })
+  const rows = view.render(42)
+  const completed = renderNushellCall(
+    { command: "echo fixture" },
+    theme,
+    () => undefined,
+    () => "check",
+  ).render(42)
+  assert.match(completed[0] ?? "", /Nushell {3,}check $/u)
+  const { visibleWidth } = await import("@earendil-works/pi-tui")
+  assert.equal(visibleWidth(completed[0] ?? ""), 42)
+  assert.match(completed[0] ?? "", /^ .*check $/u)
+  assert.doesNotMatch(rows[0] ?? "", /check/u)
+  view.render(140)
+  assert.equal(calls, 1)
+  const timed = renderNushellCall(
+    { command: "echo fixture", timeout: 3 },
+    theme,
+    () => undefined,
+  ).render(42)
+  assert.deepEqual(timed.slice(-3), ["", " muted:timeout 3s ", ""])
+  assert.equal(rows[1], "")
+  assert.equal(
+    rows[2],
+    " \u001b[32mecho\u001b[22;23;24;25;27;28;29;39m fixture ",
+  )
+})
+
+test("syntax-aware continuation rows retain highlighting", async () => {
+  const { renderNushellCall } = await import("./index.ts")
+  const theme = { fg: (_color: string, text: string) => text, bold: String }
+  const command = "echo fixture | str upcase"
+  const rows = renderNushellCall({ command }, theme, script =>
+    script
+      .split("\n")
+      .map(line => `\u001b[32m${line}\u001b[0m`)
+      .join("\n"),
+  ).render(18)
+  assert.ok(rows.some(row => row.includes("\u001b[32m  | str upcase")))
+  const clipped =
+    renderNushellCall(
+      { command: "echo abcdefghijklmnop" },
+      theme,
+      script => `\u001b[32m${script}\u001b[0m`,
+    ).render(14)[2] ?? ""
+  assert.match(clipped, /\u001b\[32m/)
+  assert.doesNotMatch(clipped, /\u001b\[0m/)
+})
+
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 
 test("multiline command previews use one shell prompt for the whole program", () => {
@@ -24,13 +84,13 @@ test("multiline command previews use one shell prompt for the whole program", ()
       "let package = 'pi-coding-agent'\n^nix build $package",
       80,
     ),
-    ["$ let package = 'pi-coding-agent'", "  ^nix build $package"],
+    ["ν let package = 'pi-coding-agent'", "  ^nix build $package"],
   )
 })
 
 test("command previews retain deliberate blank source lines without inventing prompts", () => {
   assert.deepEqual(nushellCommandPreviewLines("let a = 1\n\n$a", 80), [
-    "$ let a = 1",
+    "ν let a = 1",
     "",
     "  $a",
   ])
@@ -44,7 +104,7 @@ test("narrow command previews wrap with visible continuation structure", () => {
   )
 
   assert.ok(lines.length > 1)
-  assert.match(lines[0] ?? "", /^\$ /)
+  assert.match(lines[0] ?? "", /^ν /)
   for (const line of lines.slice(1)) assert.match(line, /^  \S/)
   for (const line of lines) assert.ok(line.length <= width)
 })
@@ -54,7 +114,8 @@ test("wide command previews stay on one line and timeout metadata is demoted", (
   const preview = nushellToolPreviewLines(command, 300, 80)
 
   assert.deepEqual(preview, {
-    commandLines: [`$ ${command}`],
+    header: "󰆍 Nushell",
+    commandLines: [command],
     timeoutLines: ["timeout 300s"],
   })
 })

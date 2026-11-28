@@ -90,6 +90,15 @@ let
   unstable = import inputs.nixpkgs-unstable {
     inherit system;
     config.allowUnfree = true;
+    overlays = [
+      (_final: previous: {
+        pi-coding-agent = previous.pi-coding-agent.overrideAttrs (attrs: {
+          patches = (attrs.patches or [ ]) ++ [
+            ./ai/pi/host/tool-block-outcome.patch
+          ];
+        });
+      })
+    ];
   };
   nuConfigDir =
     if isDarwin && !config.xdg.enable then
@@ -279,6 +288,7 @@ in
 
     file = {
       "${nuConfigDir}/fj".source = "${jf.fjLib}/fj";
+      ".pi/agent/bin/nufmt".source = "${unstable.nufmt}/bin/nufmt";
       ".agents/skills".source = skills;
       ".claude/skills".source = skills;
       ".cursor/skills".source = skills;
