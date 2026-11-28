@@ -27,6 +27,7 @@ import {
 } from "./display-format.ts"
 import { stripVTControlCharacters } from "node:util"
 import { commandOutcome } from "./outcome.ts"
+import { breakAtNushellBoundaries } from "./display-boundaries.ts"
 import { resultRows } from "./result-layout.ts"
 import { verdictView } from "./verdict-view.ts"
 
@@ -48,9 +49,16 @@ export const renderNushellCall = (
       : "..."
 
   const display = formatCommandForDisplay(command)
+  const broken = breakAtNushellBoundaries(display, 0)
   const colored = highlight(display)
+  const coloredBroken = broken === display ? colored : highlight(broken)
   const colorsByLine = new Map(
-    colored?.split("\n").map(line => [stripVTControlCharacters(line), line]),
+    [colored, coloredBroken].flatMap(
+      script =>
+        script
+          ?.split("\n")
+          .map(line => [stripVTControlCharacters(line), line] as const) ?? [],
+    ),
   )
   return {
     render: width => {
@@ -60,12 +68,13 @@ export const renderNushellCall = (
         args.timeout,
         width,
         wrapTextWithAnsi,
+        line => colorsByLine.get(line) ?? theme.fg("toolOutput", line),
       )
       return [
         theme.fg("toolTitle", theme.bold(preview.header)),
         "",
-        ...preview.commandLines.map(
-          line => colorsByLine.get(line) ?? theme.fg("toolOutput", line),
+        ...preview.commandLines.map(line =>
+          line.replace(/\u001b\[(?:0|)m/gu, "\u001b[39m"),
         ),
         ...preview.timeoutLines.map(line => theme.fg("muted", line)),
       ]

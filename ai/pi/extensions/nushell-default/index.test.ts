@@ -32,7 +32,28 @@ test("the rendered Nushell header is separated from the unbolded script", async 
   view.render(140)
   assert.equal(calls, 1)
   assert.equal(rows[1], "")
-  assert.equal(rows[2], "\u001b[32mecho\u001b[0m fixture")
+  assert.equal(rows[2], "\u001b[32mecho\u001b[39m fixture")
+})
+
+test("syntax-aware continuation rows retain highlighting", async () => {
+  const { renderNushellCall } = await import("./index.ts")
+  const theme = { fg: (_color: string, text: string) => text, bold: String }
+  const command = "echo fixture | str upcase"
+  const rows = renderNushellCall({ command }, theme, script =>
+    script
+      .split("\n")
+      .map(line => `\u001b[32m${line}\u001b[0m`)
+      .join("\n"),
+  ).render(18)
+  assert.ok(rows.some(row => row.includes("\u001b[32m  | str upcase")))
+  const clipped =
+    renderNushellCall(
+      { command: "echo abcdefghijklmnop" },
+      theme,
+      script => `\u001b[32m${script}\u001b[0m`,
+    ).render(14)[2] ?? ""
+  assert.match(clipped, /\u001b\[32m/)
+  assert.doesNotMatch(clipped, /\u001b\[0m/)
 })
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")

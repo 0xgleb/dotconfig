@@ -92,13 +92,14 @@ export const nushellToolPreviewLines = (
   timeout: number | undefined,
   width: number,
   wrapLine: PreviewLineWrapper = wrapPreviewLine,
+  styleLine: (line: string) => string = line => line,
 ): { header: string; commandLines: string[]; timeoutLines: string[] } => {
   const safeWidth = Math.max(1, Math.floor(width))
   return {
     header: truncateToWidth("󰆍 Nushell", safeWidth, ""),
     commandLines: breakAtNushellBoundaries(command, safeWidth)
       .split("\n")
-      .map(line => truncateToWidth(line, safeWidth, "…")),
+      .map(line => truncateToWidth(styleLine(line), safeWidth, "…")),
     timeoutLines: timeout ? wrapLine(`timeout ${timeout}s`, safeWidth) : [],
   }
 }
