@@ -12,6 +12,8 @@ import {
 } from "./report-jobs.ts"
 import { createOwnerAllowance } from "../classified-workflows/owner-allowance.ts"
 
+import { alignChromeLine } from "../shared/chrome.ts"
+
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 const start = source.indexOf("export default function remoteControl(")
 const end = source.indexOf("  pi.events.on(QUESTION_STATE_EVENT", start)
@@ -32,6 +34,7 @@ export const reportToolsFixture = async (
     Either,
     Type,
     createReportJobs,
+    alignChromeLine,
     REPORT_JOB_ENTRY,
     registerRuntimeVersion: () => {},
     makeRemoteBridgeStore: () => ({}),
@@ -74,8 +77,17 @@ export const reportToolsFixture = async (
         setStatus: (_key: string, text: string) => {
           ui.push(String(text))
         },
-        setWidget: (_key: string, lines: string[]) => {
-          ui.push(String(lines))
+        setWidget: (
+          _key: string,
+          lines: unknown,
+          options?: { placement?: string },
+        ) => {
+          if (typeof lines === "function") {
+            const widget = lines(undefined, {
+              fg: (color: string, text: string) => `${color}:${text}`,
+            })
+            ui.push(`${options?.placement}:${widget.render(100).join("\n")}`)
+          } else ui.push(String(lines))
         },
         notify: () => {},
       },
@@ -105,6 +117,14 @@ test("terminal report history does not remain above the prompt", async () => {
     sender: "fixture",
     characters: 10,
   }
+  present([{ ...base, id: "active-fixture", status: "reviewing", pass: 1 }])
+  assert.ok(
+    fixture.ui.some(
+      line =>
+        line.startsWith("aboveEditor:muted:") &&
+        line.includes("owner-report · reviewing 1/2"),
+    ),
+  )
   present([
     {
       ...base,

@@ -1,3 +1,4 @@
+import { alignChromeLine } from "../shared/chrome.ts"
 import { homedir } from "node:os"
 import { randomUUID } from "node:crypto"
 import { resumeWorkers, resumeOutcomeText } from "./resume.ts"
@@ -180,13 +181,23 @@ export default function remoteControl(
     ctx.ui.setWidget(
       "telegram-reports",
       pending.length
-        ? pending
-            .slice(-4)
-            .map(
-              job =>
-                `Telegram ${job.id.slice(0, 8)} · ${job.kind} · ${job.status}${job.pass ? ` ${job.pass}/2` : ""}`,
-            )
+        ? (_tui, theme) => ({
+            render: width =>
+              pending
+                .slice(-4)
+                .map(job =>
+                  theme.fg(
+                    "muted",
+                    alignChromeLine(
+                      `Telegram ${job.id.slice(0, 8)} · ${job.kind} · ${job.status}${job.pass ? ` ${job.pass}/2` : ""}`,
+                      width,
+                    ),
+                  ),
+                ),
+            invalidate: () => {},
+          })
         : undefined,
+      { placement: "aboveEditor" },
     )
   }
   const reports = createReportJobs({
