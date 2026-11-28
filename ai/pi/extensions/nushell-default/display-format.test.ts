@@ -31,6 +31,15 @@ test("quoted GraphQL punctuation survives preview preprocessing", () => {
   )
 })
 
+test("quoted regex escapes do not hide the real pipeline boundary", () => {
+  const command = String.raw`ls | where name =~ '^foo\.[ab|c];{2}$'`
+  assert.equal(
+    breakAtNushellBoundaries(command, 20),
+    String.raw`ls
+  | where name =~ '^foo\.[ab|c];{2}$'`,
+  )
+})
+
 test("unchanged formatter output uses Nushell boundaries when it does not fit", () => {
   const raw =
     'with-env {MODE: "fixture"} { [1 2 3 4] | each {|x| $x + 100 }; assert true; print "fixture done" }'

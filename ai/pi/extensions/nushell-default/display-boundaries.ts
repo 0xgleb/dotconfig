@@ -3,21 +3,32 @@ export const breakAtNushellBoundaries = (
   text: string,
   width: number,
 ): string => {
-  if (
-    text.length <= width ||
-    /[\n\r#`\\$']/u.test(text.replace(/\$[\w-]+/gu, ""))
-  )
-    return text
+  if (text.length <= width || /[\n\r\u001b]/u.test(text)) return text
   const stack: string[] = []
   const breaks: Array<{ index: number; indent: string }> = []
-  let quoted = false
+  let quote: '"' | "'" | undefined
   let bodyStart = -1
   let bodyEnd = -1
 
   for (let index = 0; index < text.length; index++) {
     const char = text[index]
-    if (char === '"') quoted = !quoted
-    if (quoted || char === '"') continue
+    if (quote) {
+      if (quote === '"' && char === "\\") index++
+      else if (char === quote) quote = undefined
+      continue
+    }
+    if (
+      char === "#" ||
+      char === "`" ||
+      char === "\\" ||
+      text.startsWith('$"', index) ||
+      text.startsWith("$'", index)
+    )
+      return text
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
     if (char === "{" || char === "[" || char === "(") {
       if (
         char === "{" &&
@@ -45,7 +56,7 @@ export const breakAtNushellBoundaries = (
       }
     }
   }
-  if (quoted || stack.length > 0 || breaks.length === 0) return text
+  if (quote || stack.length > 0 || breaks.length === 0) return text
 
   let offset = 0
   let indent = ""
