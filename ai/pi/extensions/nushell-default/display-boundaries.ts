@@ -28,7 +28,25 @@ export const breakAtNushellBoundaries = (
   keepClosurePipeline = false,
 ): string => {
   if (text.length <= width || /[\r\u001b]/u.test(text)) return text
-  if (text.includes("\n")) return reflowLoopList(text, width)
+  if (text.includes("\n")) {
+    const lines = text.split("\n")
+    // Leave scripts containing potentially multiline literals unchanged.
+    const singleLineTokens = /^(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^"'`#])*$/u
+    if (!lines.every(line => singleLineTokens.test(line))) return text
+    return lines
+      .map(line => {
+        const list = reflowLoopList(line, width)
+        if (list !== line) return list
+        const block = /^( *)(if (?:true|false) \{.+\})$/u.exec(line)
+        if (!block?.[2]) return line
+        const indent = block[1] ?? ""
+        return breakAtNushellBoundaries(block[2], width - indent.length)
+          .split("\n")
+          .map(row => indent + row)
+          .join("\n")
+      })
+      .join("\n")
+  }
   const stack: string[] = []
   const breaks: Array<{ index: number; indent: string; statementEnd?: true }> =
     []
@@ -62,7 +80,9 @@ export const breakAtNushellBoundaries = (
       if (
         char === "{" &&
         stack.length === 0 &&
-        /^with-env\s+\{.*\}\s*$/u.test(text.slice(0, index))
+        /^(?:with-env\s+\{.*\}|if (?:true|false))\s*$/u.test(
+          text.slice(0, index),
+        )
       ) {
         if (bodyStart !== -1) return text
         bodyStart = index

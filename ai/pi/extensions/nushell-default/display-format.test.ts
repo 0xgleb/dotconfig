@@ -14,6 +14,15 @@ test("reflows a long loop list inside an authored multiline script", () => {
   )
 })
 
+test("expands a simple braced if inside a multiline loop", () => {
+  const script =
+    'for p in [one two] {\n  if true { print "long message"; print $p }\n}'
+  assert.equal(
+    breakAtNushellBoundaries(script, 28),
+    'for p in [one two] {\n  if true {\n    print "long message";\n    print $p\n  }\n}',
+  )
+})
+
 test("preserves authored indentation in multiline previews", () => {
   const script =
     "for w in [42 140] {\n  with-env {MODE: 'fixture'} {\n    print $w\n  }\n}"
