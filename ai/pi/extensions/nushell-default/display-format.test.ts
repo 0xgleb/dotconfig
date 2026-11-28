@@ -48,6 +48,6 @@ test("unchanged formatter output uses Nushell boundaries when it does not fit", 
   assert.ok(commandLines.some(line => line.trim() === "}"))
   assert.ok(commandLines.every(line => line.length <= 45))
   assert.deepEqual(nushellToolPreviewLines(raw, undefined, 140).commandLines, [
-    `$ ${raw}`,
+    `ν ${raw}`,
   ])
 })

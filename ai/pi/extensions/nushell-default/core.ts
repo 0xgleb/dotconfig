@@ -79,7 +79,7 @@ export const nushellCommandPreviewLines = (
       (line, wrappedLineIndex) =>
         `${
           sourceLineIndex === firstCommandLine && wrappedLineIndex === 0
-            ? "$ "
+            ? "ν "
             : "  "
         }${line}`,
     )

@@ -24,13 +24,13 @@ test("multiline command previews use one shell prompt for the whole program", ()
       "let package = 'pi-coding-agent'\n^nix build $package",
       80,
     ),
-    ["$ let package = 'pi-coding-agent'", "  ^nix build $package"],
+    ["ν let package = 'pi-coding-agent'", "  ^nix build $package"],
   )
 })
 
 test("command previews retain deliberate blank source lines without inventing prompts", () => {
   assert.deepEqual(nushellCommandPreviewLines("let a = 1\n\n$a", 80), [
-    "$ let a = 1",
+    "ν let a = 1",
     "",
     "  $a",
   ])
@@ -44,7 +44,7 @@ test("narrow command previews wrap with visible continuation structure", () => {
   )
 
   assert.ok(lines.length > 1)
-  assert.match(lines[0] ?? "", /^\$ /)
+  assert.match(lines[0] ?? "", /^ν /)
   for (const line of lines.slice(1)) assert.match(line, /^  \S/)
   for (const line of lines) assert.ok(line.length <= width)
 })
@@ -54,7 +54,7 @@ test("wide command previews stay on one line and timeout metadata is demoted", (
   const preview = nushellToolPreviewLines(command, 300, 80)
 
   assert.deepEqual(preview, {
-    commandLines: [`$ ${command}`],
+    commandLines: [`ν ${command}`],
     timeoutLines: ["timeout 300s"],
   })
 })
