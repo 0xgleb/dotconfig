@@ -4,7 +4,7 @@
  import { createMarkdownTransform } from "./markdown-transform.ts";
  
 +class ReplyMarkdown extends Markdown {
-+	override render(width: number): readonly string[] {
++	override render(width: number) {
 +		return super.render(Math.min(width, 80));
 +	}
 +}
