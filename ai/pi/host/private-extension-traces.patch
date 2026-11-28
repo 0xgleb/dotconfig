@@ -1,0 +1,34 @@
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -147,1 +147,2 @@
+ import { createChatViewport } from "./chat-viewport.ts";
++import { createExtensionDiagnostics } from "./extension-diagnostics.ts";
+@@ -3233,14 +3234,18 @@
++	private extensionDiagnostics?: ReturnType<typeof createExtensionDiagnostics>;
++
+ 	private showExtensionError(extensionPath: string, error: string, stack?: string): void {
+-		const errorMsg = `Extension "${extensionPath}" error: ${error}`;
+-		const errorText = new ThemedText(() => theme.fg("error", errorMsg), 1, 0);
+-		this.chatContainer.addChild(errorText);
+-		if (stack) {
+-			// Show stack trace in dim color, indented
+-			const stackLines = stack.split("\n").slice(1); // Skip first line (duplicates error message)
+-			if (stackLines.length > 0) {
+-				const renderStack = () => stackLines.map((line) => theme.fg("dim", `  ${line.trim()}`)).join("\n");
+-				this.chatContainer.addChild(new ThemedText(renderStack, 1, 0));
+-			}
++		if (!this.extensionDiagnostics) {
++			try {
++				const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-extension-errors-"));
++				this.extensionDiagnostics = createExtensionDiagnostics(path.join(directory, "trace.jsonl"));
++			} catch {
++				// Never spill diagnostic text to the terminal on storage failure.
++			}
+ 		}
++		const result = this.extensionDiagnostics?.record(extensionPath, error, stack ?? "");
++		if (result?.kind === "repeat") return;
++		const message = result?.message ?? "Extension error";
++		const details = result?.kind === "new" ? ` · trace: ${result.path}` : " · trace unavailable";
++		this.chatContainer.addChild(new ThemedText(() => theme.fg("error", message + details), 1, 0));
+ 		this.ui.requestRender();
+ 	}
