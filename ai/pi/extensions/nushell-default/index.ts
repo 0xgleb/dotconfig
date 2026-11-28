@@ -52,8 +52,11 @@ export const renderNushellCall = (
   const broken = breakAtNushellBoundaries(display, 0)
   const colored = highlight(display)
   const coloredBroken = broken === display ? colored : highlight(broken)
+  const inline = breakAtNushellBoundaries(display, 0, true)
+  const coloredInline =
+    inline === display || inline === broken ? undefined : highlight(inline)
   const colorsByLine = new Map(
-    [colored, coloredBroken].flatMap(
+    [colored, coloredBroken, coloredInline].flatMap(
       script =>
         script
           ?.split("\n")

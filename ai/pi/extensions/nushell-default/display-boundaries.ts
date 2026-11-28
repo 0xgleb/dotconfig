@@ -2,6 +2,7 @@
 export const breakAtNushellBoundaries = (
   text: string,
   width: number,
+  keepClosurePipeline = false,
 ): string => {
   if (text.length <= width || /[\n\r\u001b]/u.test(text)) return text
   const stack: string[] = []
@@ -9,6 +10,8 @@ export const breakAtNushellBoundaries = (
   let quote: '"' | "'" | undefined
   let bodyStart = -1
   let bodyEnd = -1
+  let lastPipe = -1
+  let expandedClosure = false
   let closure: { depth: number; indent: string } | undefined
 
   for (let index = 0; index < text.length; index++) {
@@ -41,7 +44,9 @@ export const breakAtNushellBoundaries = (
         breaks.push({ index: index + 1, indent: "  " })
       }
       const preceding = breaks.at(-1)
-      const statement = text.slice(preceding?.index ?? 0, index).trim()
+      const statement = text
+        .slice(Math.max(preceding?.index ?? 0, lastPipe), index)
+        .trim()
       const parameters = /^\{\|[\w\s,]*\|/u.exec(text.slice(index))
       if (
         char === "{" &&
@@ -50,6 +55,7 @@ export const breakAtNushellBoundaries = (
         /^(?:\|\s*)?where$/u.test(statement)
       ) {
         const indent = preceding?.indent ?? ""
+        expandedClosure = true
         closure = { depth: stack.length, indent }
         breaks.push({
           index: index + parameters[0].length,
@@ -74,7 +80,9 @@ export const breakAtNushellBoundaries = (
       if (char === ";")
         breaks.push({ index: index + 1, indent: inBody ? "  " : "" })
       if (char === "|" && text[index - 1] === " " && text[index + 1] === " ") {
-        breaks.push({ index, indent: inBody ? "    " : "  " })
+        lastPipe = index
+        if (!keepClosurePipeline)
+          breaks.push({ index, indent: inBody ? "    " : "  " })
       }
     }
   }
@@ -98,5 +106,9 @@ export const breakAtNushellBoundaries = (
     indent = boundary.indent
     return separatesStatement ? `${row}\n` : row
   })
+  if (expandedClosure && !keepClosurePipeline && width > 0) {
+    const inline = breakAtNushellBoundaries(text, 0, true)
+    if (inline.split("\n").every(line => line.length <= width)) return inline
+  }
   return [...rows, indent + text.slice(offset).trim()].join("\n")
 }

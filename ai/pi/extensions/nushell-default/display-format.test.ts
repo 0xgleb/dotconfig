@@ -42,17 +42,26 @@ test("an oversized GraphQL literal does not introduce continuation rows", () => 
 test("long where closures preserve their parameter header and block indentation", () => {
   const command = 'ls | where {|row| $row.name =~ "long-pattern" }'
   assert.equal(
-    breakAtNushellBoundaries(command, 32),
+    breakAtNushellBoundaries(command, 16),
     'ls\n  | where {|row|\n    $row.name =~ "long-pattern"\n  }',
+  )
+})
+
+test("expanding a closure keeps a pipeline header that already fits", () => {
+  const command =
+    '$source | lines | enumerate | where {|row| $row.item =~ "long-pattern" }'
+  assert.equal(
+    breakAtNushellBoundaries(command, 50),
+    '$source | lines | enumerate | where {|row|\n  $row.item =~ "long-pattern"\n}',
   )
 })
 
 test("a closed block separates an independent statement, not its next pipeline stage", () => {
   const block = 'ls | where {|row| $row.name =~ "long-pattern" }'
-  const formatted = breakAtNushellBoundaries(`${block}; print done`, 32)
+  const formatted = breakAtNushellBoundaries(`${block}; print done`, 16)
   assert.match(formatted, /\n  \};\n\nprint done$/u)
   assert.match(
-    breakAtNushellBoundaries(`${block} | length`, 32),
+    breakAtNushellBoundaries(`${block} | length`, 16),
     /\n  \}\n  \| length$/u,
   )
 })
