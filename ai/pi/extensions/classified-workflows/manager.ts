@@ -359,9 +359,7 @@ export const registerWorkManager = (
       showError(ctx, saved.left)
       return
     }
-    ctx.ui.setWidget("manager", [
-      `Manager · report ${summary.status} · /manager summary`,
-    ])
+    ctx.ui.setWidget("manager", undefined)
     if (Either.isLeft(result)) showError(ctx, result.left)
   }
 

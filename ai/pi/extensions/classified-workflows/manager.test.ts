@@ -182,6 +182,11 @@ test("actual expiry generates one summary; repeated notifications cannot replay 
   const data = receipt.data as { status: string; elapsedMs: number }
   assert.equal(data.status, "completed")
   assert.ok(data.elapsedMs >= 0)
+  const completionWidget = f.widgets
+    .filter(widget => widget.name === "manager")
+    .at(-1)
+  assert.ok(completionWidget)
+  assert.equal(completionWidget.content, undefined)
   f.manager.expire({
     version: 1,
     lastOwnerAt: 1000,
