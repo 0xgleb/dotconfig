@@ -16,6 +16,17 @@ const resolveNushellPath = (
   ...args: Parameters<typeof resolveNushellPathEffect>
 ) => Effect.runSync(resolveNushellPathEffect(...args))
 
+test("the rendered Nushell header is separated from the unbolded script", async () => {
+  const { renderNushellCall } = await import("./index.ts")
+  const theme = {
+    fg: (color: string, text: string) => `${color}:${text}`,
+    bold: (text: string) => `bold:${text}`,
+  }
+  const rows = renderNushellCall({ command: "echo fixture" }, theme).render(42)
+  assert.equal(rows[1], "")
+  assert.equal(rows[2], theme.fg("toolOutput", "echo fixture"))
+})
+
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8")
 
 test("multiline command previews use one shell prompt for the whole program", () => {

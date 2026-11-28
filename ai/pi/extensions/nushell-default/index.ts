@@ -34,7 +34,7 @@ export const nushellPromptGuidelines = [
 
 export const renderNushellCall = (
   args: BashToolInput,
-  theme: Theme,
+  theme: Pick<Theme, "fg" | "bold">,
 ): Component => {
   const command =
     typeof args.command === "string" && args.command.length > 0
@@ -53,9 +53,8 @@ export const renderNushellCall = (
       )
       return [
         theme.fg("toolTitle", theme.bold(preview.header)),
-        ...preview.commandLines.map(line =>
-          theme.fg("toolTitle", theme.bold(line)),
-        ),
+        "",
+        ...preview.commandLines.map(line => theme.fg("toolOutput", line)),
         ...preview.timeoutLines.map(line => theme.fg("muted", line)),
       ]
     },
