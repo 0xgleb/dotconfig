@@ -52,6 +52,7 @@ export const renderNushellCall = (
         wrapTextWithAnsi,
       )
       return [
+        theme.fg("toolTitle", theme.bold(preview.header)),
         ...preview.commandLines.map(line =>
           theme.fg("toolTitle", theme.bold(line)),
         ),

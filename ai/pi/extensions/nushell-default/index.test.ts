@@ -54,7 +54,8 @@ test("wide command previews stay on one line and timeout metadata is demoted", (
   const preview = nushellToolPreviewLines(command, 300, 80)
 
   assert.deepEqual(preview, {
-    commandLines: [`ν ${command}`],
+    header: " Nushell",
+    commandLines: [command],
     timeoutLines: ["timeout 300s"],
   })
 })
