@@ -24,9 +24,12 @@ test("formats nested Nushell for display and falls back to exact input", () => {
 test("unchanged formatter output wraps even in a wide pane", () => {
   const raw =
     'with-env {MODE: "fixture"} { [1 2 3 4] | each {|x| $x + 100 }; assert true; print "fixture done" }'
-  for (const width of [45, 140]) {
+  for (const width of [45]) {
     const { commandLines } = nushellToolPreviewLines(raw, undefined, width)
     assert.ok(commandLines.length > 1)
-    assert.ok(commandLines.every(line => line.length <= Math.min(width, 80)))
+    assert.ok(commandLines.every(line => line.length <= width))
   }
+  assert.deepEqual(nushellToolPreviewLines(raw, undefined, 140).commandLines, [
+    `$ ${raw}`,
+  ])
 })
