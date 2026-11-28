@@ -93,7 +93,10 @@ let
     overlays = [
       (_final: previous: {
         pi-coding-agent = previous.pi-coding-agent.overrideAttrs (attrs: {
-          patches = (attrs.patches or [ ]) ++ [ ./ai/pi/host/reply-width.patch ];
+          patches = (attrs.patches or [ ]) ++ [
+            ./ai/pi/host/reply-width.patch
+            ./ai/pi/host/tool-block-outcome.patch
+          ];
         });
       })
     ];

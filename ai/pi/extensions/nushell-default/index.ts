@@ -146,8 +146,9 @@ export default function nushellDefault(pi: ExtensionAPI): void {
         context.isError,
         first?.type === "text" ? first.text : "",
         context.executionStarted,
+        result.details,
       )
-      if (!context.executionStarted && context.isError)
+      if (outcome.icon === "▲")
         return verdictView(outcome.icon, outcome.explanation)
       return {
         render: width => [outcome.icon, ...(original?.render(width) ?? [])],
